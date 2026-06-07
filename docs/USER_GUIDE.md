@@ -2,200 +2,67 @@
 
 ## Installation
 
-1. Create a ZIP with `camera_output_profiles/` at the archive root.
-2. Open Blender **Edit -> Preferences -> Add-ons**.
-3. Choose **Install from Disk**.
-4. Select the ZIP and enable **Camera Output Profiles**.
-5. Open **3D Viewport -> N-panel -> Cam Output**.
+Install the release ZIP through **Edit -> Preferences -> Add-ons -> Install from Disk**, enable the add-on, then open **3D Viewport -> N-panel -> Cam Output**.
 
-## Camera Profiles and Scene Output
+## Output Profiles
 
-Blender stores render output settings globally on the scene. Camera Output Profiles stores separate settings on each camera.
+Each camera stores width, height, image format, color mode, quality, transparency, output subfolder, filename template, and frame choice. Output presets modify only this profile. Use **Apply Profile to Scene Output** when Blender's native Output panel must match it.
 
-Selecting **4K 16:9** changes the selected camera profile to 3840 x 2160. Blender's native **Output > Format** may still show 1920 x 1080. This is expected.
+The final filename supports `{camera}`, `{scene}`, `{width}`, `{height}`, `{frame}`, `{format}`, and `{date}`.
 
-When the add-on renders, it temporarily applies the selected profile. By default it restores the original Scene Output after rendering.
+## Visible Single Render
 
-Use **Apply Profile to Scene Output** when you explicitly want Blender's Format panel to match the selected profile.
+**Render This Profile** temporarily applies the profile and invokes Blender's visible render workflow where possible. Completion and cancellation handlers restore the original camera, resolution, percentage, path, format, color, quality, frame, and transparency when restoration is enabled.
 
-## Interface Overview
+If the UI context cannot start a visible render, the add-on reports `Visible render invocation failed; used fallback render mode.` and uses Blender's synchronous render operator.
 
-### N-panel > Cam Output
+Batch rendering is temporarily disabled in v0.2.0 while a visible render queue is being redesigned.
 
-The compact workflow panel shows:
+## View Presets
 
-- Selected camera and profile summary
-- Final Render Path
-- Render This Profile and Apply Profile to Scene Output
-- Resolution presets
-- Render All Enabled Profiles and Validate Profiles
-- Collapsed Camera List
-- Collapsed Help and validation details
+Choose Target Mode, Distance Multiplier, Height Offset, and Margin under **Camera Tools**. Then open **Presets -> View Presets** and select Front, Back, Left, Right, Top, Bottom, 3/4 Front, 3/4 Back, Isometric, Low Angle, or High Angle.
 
-### Camera Data Properties
+Selected Object falls back to the active object and then scene center when necessary. Top and bottom views use a stable fallback up vector.
 
-Open **Properties > Camera Data > Camera Output Profile** to edit all fields for the selected camera. The panel appears only when the active object is a camera.
+## Frame And Fit
 
-### Output Properties
+- **Frame Selected Object** uses selected non-camera objects.
+- **Active Collection** uses objects in the active collection.
+- **All Visible** uses visible non-camera objects.
 
-Open **Properties > Output > Camera Output Profiles Settings** for:
+Perspective cameras move along the current view direction using the limiting field of view. Orthographic cameras update `ortho_scale`. Target transforms and geometry are not changed.
 
-- Base Output Folder
-- Default Output Subfolder for newly initialized profiles
-- Render window, folder opening, and restoration settings
-- Validation status
-- Markdown report setting
+## Target Tracking
 
-## Base Output Folder
+1. Resolve the desired target with Target Mode.
+2. Click **Create Target Empty**.
+3. Click **Aim Camera at Target** for a one-time rotation.
+4. Click **Add Track To Target** for persistent tracking.
 
-The **Base Output Folder** is `scene.render.filepath`.
+For one object, the Empty is parented while preserving world transform. The add-on uses `TRACK_NEGATIVE_Z`, `UP_Y`, and the constraint name `COP_Track_To_Target`. **Remove Camera Tracking** removes only that constraint.
 
-Use:
+## Duplicate Camera With Profile
 
-- **Choose Base Output Folder** to select it through Blender's file browser.
-- **Open Base Output Folder** to open it in the operating system.
+**Duplicate Camera + Profile** copies the object, camera data, transform, and every profile field. The duplicate becomes active. Enable **Copy Tracking** to retain the add-on target reference and tracking constraint.
 
-The add-on treats this value as a folder, not a filename prefix.
+## Camera Sets
 
-These controls are located in **Output Properties > Camera Output Profiles Settings**.
+Choose Product Basic, Product Full, or Social Pack, optionally enable tracking, then click **Create Camera Set**. New names are generated safely without overwriting existing cameras.
 
-## Output Subfolder
+Social Pack creates 16:9 hero, 1:1 square, and 9:16 vertical profile resolutions. Product sets create common directional views around the target.
 
-Each camera has an optional **Output Subfolder**.
+## Lens Presets
 
-Default:
-
-```text
-camera_profiles
-```
-
-For a Base Output Folder of `C:\tmp`, the default subfolder produces:
-
-```text
-C:\tmp\camera_profiles
-```
-
-Leave the field empty to save directly into `C:\tmp`.
-
-Absolute subfolders and traversal such as `../` are rejected.
-
-The global **Default Output Subfolder** is copied only into newly initialized profiles. It does not overwrite existing per-camera values.
-
-## Final Render Path
-
-The selected camera section always calculates and displays the complete **Final Render Path**.
-
-It updates when camera, dimensions, format, template, subfolder, or frame changes.
-
-Example:
-
-```text
-C:\tmp\camera_profiles\Camera_3840x2160_0001.png
-```
-
-Check this path before rendering.
-
-## Filename Templates
-
-Default:
-
-```text
-{camera}_{width}x{height}_{frame}
-```
-
-Tokens:
-
-- `{camera}`
-- `{scene}`
-- `{width}`
-- `{height}`
-- `{frame}`
-- `{format}`
-- `{date}`
-
-Python format specifications are supported, for example `{frame:04d}`.
-
-Invalid filename characters are sanitized. Path separators, traversal, malformed braces, and unsupported tokens are critical validation errors.
-
-## Render This Profile
-
-**Render This Profile** renders only the selected camera.
-
-Before rendering, Blender reports the camera, resolution, and full path. After rendering, it reports the saved file.
-
-If **Show Render Window** is enabled, Blender opens the Render Result where the UI context allows it.
-
-## Render All Enabled Profiles
-
-**Render All Enabled Profiles** validates and renders enabled cameras in sequence.
-
-Progress is reported for each camera:
-
-```text
-Rendering 1/3: Camera_FHD 1920x1080
-Rendering 2/3: Camera_4K 3840x2160
-Rendering 3/3: Camera_Vertical 1080x1920
-```
-
-The batch writes `CAMERA_OUTPUT_PROFILES_REPORT.md` to the Base Output Folder. It contains Blender version, scene, base folder, camera, resolution, format, full path, skipped profiles, warnings, and errors.
-
-Disable **Write Markdown Report** in Output Properties when a batch report is not needed.
-
-## Apply Profile to Scene Output
-
-This manual action copies the selected profile into Blender's native Scene Output:
-
-- Resolution X/Y
-- Resolution percentage 100%
-- File format
-- Color mode where supported
-- JPEG/WebP quality where supported
-- Film transparency where supported
-
-Presets never perform this synchronization automatically.
-
-## Render Behavior
-
-### Show Render Window
-
-Default: enabled.
-
-Shows Blender's Render Result after rendering where possible. Background/headless Blender cannot open a render window, so progress remains available in reports and console output.
-
-### Open Output Folder After Render
-
-Default: disabled.
-
-Opens the final folder after a successful single render, or the Base Output Folder after a batch.
-
-### Restore Scene Output After Render
-
-Default: enabled.
-
-Restores the original Scene Output settings after rendering.
-
-When disabled, the last profile's resolution and format settings remain applied. The original camera, frame, Base Output Folder, and file-extension behavior are still restored.
-
-## Validation
-
-Critical messages block rendering. Warnings explain non-blocking conditions such as Scene Output differing from the profile, an empty subfolder, or overwrite risk.
-
-Scene Output differing from the selected profile is normal. Use **Apply Profile to Scene Output** only when the Format panel must match.
+Open **Presets -> Lens Presets** for 24, 35, 50, 70, 85, 100 mm, or Orthographic Product. Lens changes never modify output resolution.
 
 ## Troubleshooting
 
-### Render saved under `C:\tmp\camera_profiles`
+**Render already running:** wait or cancel Blender's current render. The add-on clears its job on completion/cancel.
 
-`C:\tmp` is the Base Output Folder and `camera_profiles` is the profile's Output Subfolder. Both are visible in the panel, along with the complete Final Render Path.
+**Target missing:** recreate the Target Empty and add tracking again.
 
-### 4K profile still shows FullHD in Output Properties
+**Nothing to frame:** select a non-camera object or choose another framing source.
 
-Presets edit the camera profile only. Click **Apply Profile to Scene Output** to copy 3840 x 2160 into Blender's Format panel.
+**4K profile but Output panel shows FullHD:** this is expected. Click **Apply Profile to Scene Output** only when manual synchronization is desired.
 
-### Render feels silent
-
-Enable **Show Render Window** and watch Blender's status/report area. Batch progress also prints to the system console.
-
-### File already exists
-
-Validation reports overwrite risk. Change the filename template, camera name, subfolder, or frame token.
+**Wrong path:** validate the Base Output Folder, Output Subfolder, and filename template shown under Final Render Path.

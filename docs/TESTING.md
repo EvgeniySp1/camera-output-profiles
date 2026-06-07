@@ -12,92 +12,67 @@ blender --background --factory-startup --python tests/blender_integration_test.p
 
 ## Blender 5.1.2 Manual Checklist
 
-### Test 1: Preset changes profile only
+### Test 1: Single visible render
 
-1. Open default Blender scene.
+1. Open default scene.
 2. Select Camera.
-3. Open N-panel > Cam Output.
-4. Click `Add / Refresh Camera Profiles`.
-5. Click `4K 16:9`.
+3. Set profile to 4K 16:9.
+4. Click Render This Profile.
 
-Expected:
+Expected: Blender shows F12-like progress where possible; output is 3840x2160; scene output restores when enabled.
 
-- selected camera profile shows 3840 x 2160
-- camera list shows 3840 x 2160
-- Blender native Output > Format may remain 1920 x 1080
-- report says profile changed and Scene Output unchanged
+### Test 2: Cancel render restore
 
-### Test 2: Apply profile to Scene Output
+1. Start visible render.
+2. Cancel render.
 
-1. With selected profile at 3840 x 2160, click `Apply Profile to Scene Output`.
+Expected: scene settings restore; active render state clears; the next render can start.
 
-Expected:
+### Test 3: View preset
 
-- Blender native Output > Format changes to 3840 x 2160
-- resolution percentage becomes 100%
+1. Select Cube and Camera.
+2. Apply 3/4 Front.
 
-### Test 3: Final path clarity
+Expected: camera moves around and points at Cube; output profile is unchanged.
 
-1. Check selected camera section.
+### Test 4: Frame selected
 
-Expected:
+1. Select Cube and Camera.
+2. Click Frame Selected Object.
 
-- full final render path is visible
-- path includes base output folder
-- path includes output subfolder if not empty
-- path includes filename generated from template
+Expected: Cube fits in the camera frame with margin.
 
-### Test 4: Render This Profile
+### Test 5: Track target
 
-1. Set profile to 3840 x 2160 PNG.
-2. Confirm final path preview is visible.
-3. Click `Render This Profile`.
+1. Select Cube and Camera.
+2. Create Target Empty.
+3. Add Track To Target.
+4. Move Cube.
 
-Expected:
+Expected: target follows Cube and camera keeps looking at it.
 
-- render process is visible or clearly reported
-- file is saved to the shown path
-- output image is 3840 x 2160
-- no FullHD image is produced from this profile
+### Test 6: Duplicate camera with profile
 
-### Test 5: Render All Enabled Profiles
+1. Set Camera profile to Square 2048x2048 PNG.
+2. Duplicate Camera + Profile.
 
-1. Add 3 cameras:
-   - Camera_FHD: 1920 x 1080 PNG
-   - Camera_4K: 3840 x 2160 PNG
-   - Camera_Vertical: 1080 x 1920 JPEG
-2. Click `Render All Enabled Profiles`.
+Expected: duplicate exists, profile is copied, duplicate is selected, original is unchanged.
 
-Expected:
+### Test 7: Create Product Basic camera set
 
-- progress is reported for each camera
-- 3 files are created
-- each file has its own correct resolution
-- Markdown report is created
-- no file overwrites another
+1. Select Cube.
+2. Choose Product Basic.
+3. Create Camera Set.
 
-### Test 6: Filename template
+Expected: named cameras and profiles are created, point at target, and do not overwrite existing cameras.
 
-1. Set filename template to `{camera}_{width}x{height}_{frame}`.
-2. Render selected profile.
+### Test 8: Lens presets
 
-Expected:
+1. Select Camera.
+2. Apply 70mm Product.
 
-- output filename contains camera name, width, height and frame
-- no asterisks
-- no broken shortened tokens
+Expected: lens is 70 mm and output resolution is unchanged.
 
-### Test 7: Panel locations and compact N-panel
+### Test 9: Batch render removed
 
-1. Open N-panel > Cam Output.
-2. Confirm the main panel shows only selected-camera summary, final path, presets, render/apply actions, batch render, and validation.
-3. Confirm Camera List and Help are collapsed by default.
-4. Open Properties > Camera Data.
-5. Open Properties > Output.
-
-Expected:
-
-- full profile fields appear under Camera Output Profile in Camera Data
-- global settings appear under Camera Output Profiles Settings in Output Properties
-- long explanations and filename token help are not permanently visible in the main N-panel
-- validation results are collapsed unless critical errors exist
+Expected: no visible Render All Enabled Profiles button; documentation states batch rendering is disabled for v0.2.0.

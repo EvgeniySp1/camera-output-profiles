@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import webbrowser
 
 import bpy
 
@@ -14,6 +15,7 @@ from .validation import ValidationResult
 
 
 REPORT_FILENAME = "CAMERA_OUTPUT_PROFILES_REPORT.md"
+_ACTIVE_RENDER_JOB = None
 
 
 class RenderProfileError(RuntimeError):
@@ -57,6 +59,26 @@ class BatchRenderResult:
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     report_path: Path | None = None
+
+
+@dataclass(slots=True)
+class RenderSession:
+    scene: Any
+    camera_name: str
+    snapshot: SceneRenderSnapshot
+    output_path: Path
+    restore_scene_output: bool
+    open_folder_after_render: bool
+    write_report: bool
+    show_render_window: bool
+    fallback_used: bool = False
+
+
+@dataclass(slots=True)
+class RenderStartResult:
+    output_path: Path
+    fallback_used: bool
+    operator_result: set[str]
 
 
 def capture_scene_settings(scene: bpy.types.Scene) -> SceneRenderSnapshot:
@@ -306,6 +328,251 @@ def render_profile(
     if show_render_window:
         show_render_result()
     return output_path
+
+
+def is_render_job_active() -> bool:
+    return _ACTIVE_RENDER_JOB is not None
+
+
+def _handler_list(name: str):
+    return getattr(getattr(bpy.app, "handlers", None), name, None)
+
+
+def _register_render_handlers() -> None:
+    for name, handler in (
+        ("render_complete", _on_render_complete),
+        ("render_cancel", _on_render_cancel),
+    ):
+        handlers = _handler_list(name)
+        if handlers is not None and handler not in handlers:
+            handlers.append(handler)
+
+
+def _remove_render_handlers() -> None:
+    for name, handler in (
+        ("render_complete", _on_render_complete),
+        ("render_cancel", _on_render_cancel),
+    ):
+        handlers = _handler_list(name)
+        if handlers is not None:
+            while handler in handlers:
+                handlers.remove(handler)
+
+
+def _set_workspace_status(message: str | None) -> None:
+    workspace = getattr(getattr(bpy, "context", None), "workspace", None)
+    if workspace is not None:
+        try:
+            workspace.status_text_set(message)
+        except Exception:
+            pass
+
+
+def _open_output_folder(path: Path) -> None:
+    try:
+        result = bpy.ops.wm.path_open(filepath=str(path))
+        if "FINISHED" in result:
+            return
+    except Exception:
+        pass
+    try:
+        webbrowser.open(path.as_uri())
+    except Exception as exc:
+        print(f"[Camera Output Profiles] WARNING: Could not open output folder: {exc}")
+
+
+def write_single_render_report(
+    scene: bpy.types.Scene,
+    camera_name: str,
+    output_path: Path,
+    *,
+    cancelled: bool = False,
+) -> Path:
+    report_path = output_path.parent / REPORT_FILENAME
+    lines = [
+        "# Camera Output Profiles Report",
+        "",
+        f"- Scene: `{_markdown_text(scene.name)}`",
+        f"- Date/time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
+        f"- Blender version: `{bpy.app.version_string}`",
+        f"- Rendered profiles: `{'0' if cancelled else '1'}`",
+        f"- Status: `{'Cancelled' if cancelled else 'Completed'}`",
+        "",
+        "## Output Files",
+        "",
+        (
+            f"- `{_markdown_text(camera_name)}` | "
+            f"`{output_path}` | {'cancelled' if cancelled else 'rendered'}"
+        ),
+        "",
+        "## Notes",
+        "",
+        "- Batch rendering is disabled in v0.2.0.",
+    ]
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"[Camera Output Profiles] Wrote report: {report_path}")
+    return report_path
+
+
+def _finish_render(cancelled: bool) -> None:
+    global _ACTIVE_RENDER_JOB
+    job = _ACTIVE_RENDER_JOB
+    if job is None:
+        _remove_render_handlers()
+        return
+
+    _ACTIVE_RENDER_JOB = None
+    _remove_render_handlers()
+    restore_errors: list[str] = []
+    if getattr(job, "restore_scene_output", False):
+        restore_errors = _restore_scene_settings(job.scene, job.snapshot)
+    else:
+        restore_errors = _restore_non_profile_settings(job.scene, job.snapshot)
+
+    if cancelled:
+        message = (
+            f"Render cancelled for {job.camera_name}. "
+            f"Planned output: {job.output_path}"
+        )
+        if job.write_report:
+            try:
+                job.output_path.parent.mkdir(parents=True, exist_ok=True)
+                write_single_render_report(
+                    job.scene,
+                    job.camera_name,
+                    job.output_path,
+                    cancelled=True,
+                )
+            except OSError as exc:
+                print(f"[Camera Output Profiles] WARNING: Could not write report: {exc}")
+        if job.open_folder_after_render:
+            _open_output_folder(job.output_path.parent)
+    else:
+        message = f"Rendered {job.camera_name} profile: {job.output_path}"
+        if job.write_report:
+            try:
+                job.output_path.parent.mkdir(parents=True, exist_ok=True)
+                write_single_render_report(job.scene, job.camera_name, job.output_path)
+            except OSError as exc:
+                print(f"[Camera Output Profiles] WARNING: Could not write report: {exc}")
+        if job.open_folder_after_render:
+            _open_output_folder(job.output_path.parent)
+        if job.show_render_window and job.fallback_used:
+            show_render_result()
+
+    if restore_errors:
+        message += " Scene restoration reported warnings."
+    print(f"[Camera Output Profiles] {message}")
+    _set_workspace_status(message)
+
+
+def _on_render_complete(scene, *args) -> None:
+    _finish_render(cancelled=False)
+
+
+def _on_render_cancel(scene, *args) -> None:
+    _finish_render(cancelled=True)
+
+
+def cleanup_render_session(*, restore: bool = True) -> None:
+    """Remove handlers and optionally restore a currently active add-on render."""
+    global _ACTIVE_RENDER_JOB
+    job = _ACTIVE_RENDER_JOB
+    _ACTIVE_RENDER_JOB = None
+    _remove_render_handlers()
+    if restore and job is not None and hasattr(job, "scene") and hasattr(job, "snapshot"):
+        _restore_scene_settings(job.scene, job.snapshot)
+    _set_workspace_status(None)
+
+
+def start_visible_render(
+    scene: bpy.types.Scene,
+    camera: bpy.types.Object,
+    *,
+    now: datetime | None = None,
+) -> RenderStartResult:
+    """Start one profile render and defer restoration to Blender render handlers."""
+    global _ACTIVE_RENDER_JOB
+    if is_render_job_active():
+        raise RenderProfileError("Camera Output Profiles render is already running.")
+    if getattr(camera, "type", None) != "CAMERA" or camera.data is None:
+        raise RenderProfileError(f"{camera.name} is not a valid camera.")
+
+    try:
+        output_path = output_path_for_profile(scene, camera, now=now)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError, utils.TemplateError) as exc:
+        raise RenderProfileError(
+            f"Could not prepare output for {camera.name}: {exc}"
+        ) from exc
+
+    snapshot = capture_scene_settings(scene)
+    profile = camera.camera_output_profile
+    scene.camera = camera
+    apply_profile_to_scene_output(scene, profile)
+    scene.render.filepath = str(output_path)
+    if hasattr(scene.render, "use_file_extension"):
+        scene.render.use_file_extension = False
+    if not profile.use_current_frame:
+        scene.frame_set(int(profile.frame))
+
+    job = RenderSession(
+        scene=scene,
+        camera_name=camera.name,
+        snapshot=snapshot,
+        output_path=output_path,
+        restore_scene_output=bool(scene.camera_output_restore_scene_output),
+        open_folder_after_render=bool(scene.camera_output_open_folder_after_render),
+        write_report=bool(scene.camera_output_write_report),
+        show_render_window=bool(scene.camera_output_show_render_window),
+    )
+    _ACTIVE_RENDER_JOB = job
+    _register_render_handlers()
+    _set_workspace_status(f"Rendering {camera.name}: {output_path}")
+
+    fallback_used = False
+    try:
+        result = bpy.ops.render.render(
+            "INVOKE_DEFAULT",
+            write_still=True,
+            scene=scene.name,
+        )
+        if "CANCELLED" in result:
+            raise RuntimeError(f"Visible render operator returned {result}")
+    except Exception as visible_error:
+        fallback_used = True
+        job.fallback_used = True
+        print(
+            "[Camera Output Profiles] WARNING: "
+            "Visible render invocation failed; used fallback render mode. "
+            f"Reason: {visible_error}"
+        )
+        if _ACTIVE_RENDER_JOB is None:
+            scene.camera = camera
+            apply_profile_to_scene_output(scene, profile)
+            scene.render.filepath = str(output_path)
+            if hasattr(scene.render, "use_file_extension"):
+                scene.render.use_file_extension = False
+            if not profile.use_current_frame:
+                scene.frame_set(int(profile.frame))
+            _ACTIVE_RENDER_JOB = job
+            _register_render_handlers()
+        try:
+            result = bpy.ops.render.render(write_still=True, scene=scene.name)
+        except Exception as fallback_error:
+            cleanup_render_session(restore=True)
+            raise RenderProfileError(
+                f"Render failed for {camera.name}: {fallback_error}"
+            ) from fallback_error
+        if "FINISHED" not in result:
+            cleanup_render_session(restore=True)
+            raise RenderProfileError(
+                f"Blender render operator returned {result}"
+            )
+
+    if "FINISHED" in result and _ACTIVE_RENDER_JOB is job:
+        _finish_render(cancelled=False)
+    return RenderStartResult(output_path, fallback_used, set(result))
 
 
 def _markdown_text(value: str) -> str:

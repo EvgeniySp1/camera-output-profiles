@@ -20,6 +20,7 @@ class AddonContractTests(unittest.TestCase):
     def test_required_python_modules_exist_and_parse(self):
         module_names = {
             "__init__.py",
+            "camera_tools.py",
             "properties.py",
             "ui.py",
             "operators.py",
@@ -39,7 +40,7 @@ class AddonContractTests(unittest.TestCase):
         module = ast.parse((PACKAGE / "__init__.py").read_text(encoding="utf-8"))
         bl_info = assignment_value(module, "bl_info")
         self.assertEqual(bl_info["name"], "Camera Output Profiles")
-        self.assertEqual(bl_info["version"], (0, 1, 2))
+        self.assertEqual(bl_info["version"], (0, 2, 0))
         self.assertEqual(bl_info["blender"], (4, 2, 0))
         self.assertEqual(bl_info["category"], "Render")
         self.assertEqual(bl_info["location"], "View3D > Sidebar > Cam Output")
@@ -59,12 +60,21 @@ class AddonContractTests(unittest.TestCase):
             "camera_output.choose_base_output_folder",
             "camera_output.open_final_output_folder",
             "camera_output.apply_profile_to_scene",
+            "camera_output.apply_view_preset",
+            "camera_output.frame_target",
+            "camera_output.create_target_empty",
+            "camera_output.aim_at_target",
+            "camera_output.add_tracking",
+            "camera_output.remove_tracking",
+            "camera_output.duplicate_camera_profile",
+            "camera_output.create_camera_set",
+            "camera_output.apply_lens_preset",
         }
         for operator_id in required_ids:
             with self.subTest(operator_id=operator_id):
                 self.assertIn(f'"{operator_id}"', source)
 
-    def test_ui_panels_match_v012_architecture(self):
+    def test_ui_panels_match_v020_architecture(self):
         source = (PACKAGE / "ui.py").read_text(encoding="utf-8")
         self.assertIn('bl_space_type = "VIEW_3D"', source)
         self.assertIn('bl_region_type = "UI"', source)
@@ -83,8 +93,7 @@ class AddonContractTests(unittest.TestCase):
         self.assertIn('bl_label = "Help"', source)
         self.assertGreaterEqual(source.count('bl_options = {"DEFAULT_CLOSED"}'), 3)
         for label in (
-            "Camera Output Profiles v0.1.2",
-            "Render All Enabled Profiles",
+            "Camera Output Profiles v0.2.0",
             "Selected Camera:",
             "Profile:",
             "Final Render Path",
@@ -95,6 +104,14 @@ class AddonContractTests(unittest.TestCase):
             "Render",
             "Default Output Subfolder",
             "Write Markdown Report",
+            "Output Presets",
+            "View Presets",
+            "Lens Presets",
+            "Camera Tools",
+            "Frame Selected Object",
+            "Create Target Empty",
+            "Duplicate Camera + Profile",
+            "Create Camera Set",
         ):
             with self.subTest(label=label):
                 self.assertIn(label, source)
@@ -106,6 +123,7 @@ class AddonContractTests(unittest.TestCase):
             main_class,
         )
         self.assertNotIn("Tokens: {camera}", main_class)
+        self.assertNotIn("Render All Enabled Profiles", source)
 
     def test_required_project_documentation_exists(self):
         required_files = {
@@ -113,6 +131,7 @@ class AddonContractTests(unittest.TestCase):
             ROOT / "LICENSE",
             ROOT / "CHANGELOG.md",
             ROOT / "RELEASE_NOTES_v0.1.0.md",
+            ROOT / "RELEASE_NOTES_v0.2.0.md",
             ROOT / "DRAFT_RELEASE_NOTES_v0.1.1.md",
             ROOT / "DRAFT_RELEASE_NOTES_v0.1.2.md",
             ROOT / "docs" / "USER_GUIDE.md",
@@ -140,9 +159,9 @@ class AddonContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, readme)
         self.assertIn("still images only", readme)
-        self.assertIn("Camera_Front", readme)
-        self.assertIn("Camera_Square", readme)
-        self.assertIn("Camera_Vertical", readme)
+        self.assertIn("visible single-camera rendering", readme)
+        self.assertIn("camera placement presets", readme)
+        self.assertIn("target tracking", readme)
         self.assertIn("Apply Profile to Scene Output", readme)
         self.assertIn("Final Render Path", readme)
 
@@ -152,37 +171,60 @@ class AddonContractTests(unittest.TestCase):
         release_notes = (ROOT / "RELEASE_NOTES_v0.1.0.md").read_text(
             encoding="utf-8"
         )
+        v020_notes = (ROOT / "RELEASE_NOTES_v0.2.0.md").read_text(
+            encoding="utf-8"
+        )
         roadmap = (ROOT / "docs" / "ROADMAP.md").read_text(encoding="utf-8")
         self.assertIn("MIT License", license_text)
         self.assertIn("0.1.0", changelog)
         self.assertIn("# Camera Output Profiles v0.1.0", release_notes)
-        for version in ("v0.2.0", "v0.3.0", "v1.0.0"):
-            self.assertIn(version, roadmap)
+        self.assertIn("# Camera Output Profiles v0.2.0", v020_notes)
+        self.assertIn("v0.3.0", roadmap)
 
-    def test_v011_documentation_is_unreleased(self):
+    def test_v011_draft_notes_are_retained_as_history(self):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         draft_notes = (ROOT / "DRAFT_RELEASE_NOTES_v0.1.1.md").read_text(
             encoding="utf-8"
         )
-        testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
         self.assertIn("v0.1.1", changelog)
         self.assertIn("unreleased", changelog.lower())
         self.assertIn("DRAFT", draft_notes)
         self.assertIn("NOT RELEASED", draft_notes)
-        self.assertIn("Blender 5.1.2", testing)
-        self.assertIn("Preset changes profile only", testing)
 
-    def test_v012_documentation_is_unreleased(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    def test_v012_draft_notes_are_retained_as_history(self):
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         draft_notes = (ROOT / "DRAFT_RELEASE_NOTES_v0.1.2.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn("v0.1.2", readme)
         self.assertIn("v0.1.2", changelog)
         self.assertIn("unreleased", changelog.lower())
         self.assertIn("DRAFT", draft_notes)
         self.assertIn("NOT RELEASED", draft_notes)
+
+    def test_v020_documents_batch_disable_and_manual_workflows(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
+        roadmap = (ROOT / "docs" / "ROADMAP.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        required_notice = (
+            "Batch rendering is temporarily disabled in v0.2.0 while a visible "
+            "render queue is being redesigned."
+        )
+        self.assertIn(required_notice, readme)
+        for label in (
+            "Single visible render",
+            "Cancel render restore",
+            "View preset",
+            "Frame selected",
+            "Track target",
+            "Duplicate camera with profile",
+            "Create Product Basic camera set",
+            "Lens presets",
+            "Batch render removed",
+        ):
+            self.assertIn(label, testing)
+        self.assertIn("Visible Render Queue", roadmap)
+        self.assertIn("## v0.2.0", changelog)
 
 
 if __name__ == "__main__":

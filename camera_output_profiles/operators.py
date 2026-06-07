@@ -8,7 +8,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import Operator
 
-from . import render_manager, utils, validation
+from . import camera_tools, render_manager, utils, validation
 
 
 DEFAULT_FILENAME_TEMPLATE = "{camera}_{width}x{height}_{frame}"
@@ -26,6 +26,22 @@ PRESETS = {
 PRESET_ITEMS = tuple(
     (identifier, label, f"Set the camera profile to {width} x {height}")
     for identifier, (label, width, height) in PRESETS.items()
+)
+
+VIEW_PRESET_ITEMS = tuple(
+    (identifier, label, f"Place the camera at the {label} view")
+    for identifier, (label, _) in camera_tools.VIEW_PRESETS.items()
+)
+
+LENS_PRESET_ITEMS = tuple(
+    (identifier, label, f"Apply {label} to the selected camera")
+    for identifier, (label, _, _) in camera_tools.LENS_PRESETS.items()
+)
+
+FRAME_TARGET_ITEMS = (
+    ("SELECTED", "Selected Object", "Frame selected non-camera objects"),
+    ("COLLECTION", "Active Collection", "Frame the active collection"),
+    ("VISIBLE", "All Visible", "Frame all visible non-camera objects"),
 )
 
 
@@ -168,6 +184,11 @@ class CAMERAOUTPUT_OT_validate_profiles(Operator):
             context.scene,
             store=True,
             selected_camera=active_or_selected_camera(context),
+            target_objects=[
+                obj
+                for obj in context.selected_objects
+                if getattr(obj, "type", None) != "CAMERA"
+            ],
         )
         if result.has_critical:
             self.report({"ERROR"}, result.summary())
@@ -350,6 +371,12 @@ class CAMERAOUTPUT_OT_render_profile(Operator):
 
     def execute(self, context: bpy.types.Context):
         scene = context.scene
+        if render_manager.is_render_job_active():
+            self.report(
+                {"ERROR"},
+                "Camera Output Profiles render is already running.",
+            )
+            return {"CANCELLED"}
         camera = _resolve_camera(context, self.camera_name)
         if camera is None:
             self.report({"ERROR"}, "Camera not found.")
@@ -378,168 +405,250 @@ class CAMERAOUTPUT_OT_render_profile(Operator):
             return {"CANCELLED"}
 
         profile = camera.camera_output_profile
-        message = (
-            f"Rendering {camera.name} at {profile.width}x{profile.height} "
-            f"to {output_path}"
-        )
+        message = f"Rendering {camera.name} at {profile.width}x{profile.height} to {output_path}"
         print(f"[Camera Output Profiles] {message}")
-        self.report({"INFO"}, message)
         _set_status(context, message)
 
         try:
-            rendered_path = render_manager.render_profile(
+            start_result = render_manager.start_visible_render(
                 scene,
                 camera,
                 now=now,
-                restore_scene_output=scene.camera_output_restore_scene_output,
-                show_render_window=scene.camera_output_show_render_window,
             )
         except render_manager.RenderProfileError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
-        finally:
-            _set_status(context, None)
 
-        if scene.camera_output_open_folder_after_render:
-            _open_folder(self, rendered_path.parent)
+        if start_result.fallback_used:
+            self.report(
+                {"WARNING"},
+                "Visible render invocation failed; used fallback render mode.",
+            )
+        elif "RUNNING_MODAL" in start_result.operator_result:
+            self.report({"INFO"}, f"Started visible render: {start_result.output_path}")
+        else:
+            self.report({"INFO"}, f"Rendered {camera.name}: {start_result.output_path}")
+        return {"FINISHED"}
 
+
+class CAMERAOUTPUT_OT_apply_view_preset(Operator):
+    bl_idname = "camera_output.apply_view_preset"
+    bl_label = "Apply Camera View Preset"
+    bl_description = "Place the selected camera around the configured target"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(name="View", items=VIEW_PRESET_ITEMS)
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        try:
+            target = camera_tools.apply_view_preset(context, camera, self.preset)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        label = camera_tools.VIEW_PRESETS[self.preset][0]
         self.report(
             {"INFO"},
-            f"Rendered {camera.name} profile: {rendered_path}",
+            f"Applied {label} view preset to {camera.name} around {target.label}",
         )
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_frame_target(Operator):
+    bl_idname = "camera_output.frame_target"
+    bl_label = "Frame Target"
+    bl_description = "Fit target objects into the selected camera frame"
+    bl_options = {"REGISTER", "UNDO"}
+
+    target: EnumProperty(name="Target", items=FRAME_TARGET_ITEMS, default="SELECTED")
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        if self.target == "COLLECTION":
+            objects = [
+                obj for obj in context.collection.all_objects
+                if obj is not camera and getattr(obj, "type", None) != "CAMERA"
+            ]
+            label = "active collection"
+        elif self.target == "VISIBLE":
+            objects = [
+                obj for obj in context.scene.objects
+                if obj is not camera
+                and getattr(obj, "type", None) != "CAMERA"
+                and not getattr(obj, "hide_render", False)
+            ]
+            label = "all visible objects"
+        else:
+            objects = [
+                obj for obj in context.selected_objects
+                if obj is not camera and getattr(obj, "type", None) != "CAMERA"
+            ]
+            label = "selected object"
+        try:
+            camera_tools.frame_camera(context, camera, objects)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"Framed {label} in {camera.name} with {context.scene.camera_output_margin:g}% margin",
+        )
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_create_target_empty(Operator):
+    bl_idname = "camera_output.create_target_empty"
+    bl_label = "Create Target Empty"
+    bl_description = "Create or update the selected camera's target Empty"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        try:
+            empty, target = camera_tools.create_target_empty(context, camera)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Created target empty for {target.label}: {empty.name}")
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_aim_at_target(Operator):
+    bl_idname = "camera_output.aim_at_target"
+    bl_label = "Aim Camera at Target"
+    bl_description = "Rotate the camera toward its saved target once"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        try:
+            camera_tools.aim_at_saved_target(camera)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Aimed {camera.name} at target")
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_add_tracking(Operator):
+    bl_idname = "camera_output.add_tracking"
+    bl_label = "Add Track To Target"
+    bl_description = "Add or update the Camera Output Profiles Track To constraint"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        try:
+            camera_tools.add_tracking(camera)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Added Track To target for {camera.name}")
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_remove_tracking(Operator):
+    bl_idname = "camera_output.remove_tracking"
+    bl_label = "Remove Camera Tracking"
+    bl_description = "Remove only the tracking constraint created by this add-on"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        if not camera_tools.remove_tracking(camera):
+            self.report({"WARNING"}, f"No Camera Output Profiles tracking on {camera.name}")
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"Removed Camera Output Profiles tracking from {camera.name}",
+        )
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_duplicate_camera_profile(Operator):
+    bl_idname = "camera_output.duplicate_camera_profile"
+    bl_label = "Duplicate Camera + Profile"
+    bl_description = "Duplicate camera data and manually copy its output profile"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        duplicate = camera_tools.duplicate_camera(
+            context,
+            camera,
+            copy_tracking=context.scene.camera_output_copy_tracking,
+        )
+        self.report({"INFO"}, f"Duplicated {camera.name} with output profile as {duplicate.name}")
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_create_camera_set(Operator):
+    bl_idname = "camera_output.create_camera_set"
+    bl_label = "Create Camera Set"
+    bl_description = "Create a configured product or social camera set"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            cameras = camera_tools.create_camera_set(context)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Created {len(cameras)} cameras from camera set preset")
+        return {"FINISHED"}
+
+
+class CAMERAOUTPUT_OT_apply_lens_preset(Operator):
+    bl_idname = "camera_output.apply_lens_preset"
+    bl_label = "Apply Lens Preset"
+    bl_description = "Apply a focal length or orthographic preset"
+    bl_options = {"REGISTER", "UNDO"}
+
+    preset: EnumProperty(name="Lens", items=LENS_PRESET_ITEMS)
+
+    def execute(self, context):
+        camera = active_or_selected_camera(context)
+        if camera is None:
+            self.report({"ERROR"}, "Select a camera first.")
+            return {"CANCELLED"}
+        label = camera_tools.apply_lens_preset(context, camera, self.preset)
+        self.report({"INFO"}, f"Applied {label} lens preset to {camera.name}")
         return {"FINISHED"}
 
 
 class CAMERAOUTPUT_OT_render_enabled(Operator):
     bl_idname = "camera_output.render_enabled"
-    bl_label = "Render All Enabled Profiles"
-    bl_description = "Validate and render every enabled camera output profile"
-    bl_options = {"REGISTER"}
+    bl_label = "Deprecated Batch Render"
+    bl_description = "Batch rendering is disabled while a visible queue is redesigned"
+    bl_options = {"INTERNAL"}
 
     def execute(self, context: bpy.types.Context):
-        scene = context.scene
-        now = datetime.now()
-        selected_camera = active_or_selected_camera(context)
-        validation_result = validation.validate_scene(
-            scene,
-            store=True,
-            now=now,
-            selected_camera=selected_camera,
-        )
-        if validation_result.has_critical:
-            self.report({"ERROR"}, f"Render cancelled: {validation_result.summary()}")
-            return {"CANCELLED"}
-
-        all_cameras = validation.iter_scene_cameras(scene)
-        enabled_cameras = [
-            camera for camera in all_cameras if camera.camera_output_profile.enabled
-        ]
-        if not enabled_cameras:
-            self.report({"WARNING"}, "No enabled camera profiles to render.")
-            return {"CANCELLED"}
-
-        try:
-            base_path = utils.resolve_output_base(
-                scene.render.filepath,
-                bpy.path.abspath,
-            )
-        except ValueError as exc:
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-
-        batch_result = render_manager.BatchRenderResult()
-        for camera in all_cameras:
-            if not camera.camera_output_profile.enabled:
-                batch_result.skipped.append(
-                    render_manager.SkippedProfile(camera.name, "Profile disabled")
-                )
-
-        total = len(enabled_cameras)
-        for index, camera in enumerate(enabled_cameras, start=1):
-            profile = camera.camera_output_profile
-            progress = (
-                f"Rendering {index}/{total}: {camera.name} "
-                f"{profile.width}x{profile.height}"
-            )
-            print(f"[Camera Output Profiles] {progress}")
-            self.report({"INFO"}, progress)
-            _set_status(context, progress)
-            try:
-                output_path = render_manager.render_profile(
-                    scene,
-                    camera,
-                    now=now,
-                    base_path=base_path,
-                    restore_scene_output=scene.camera_output_restore_scene_output,
-                    show_render_window=False,
-                )
-                batch_result.rendered.append(
-                    render_manager.RenderedProfile(
-                        camera.name,
-                        output_path,
-                        profile.width,
-                        profile.height,
-                        profile.file_format,
-                    )
-                )
-            except render_manager.RenderProfileError as exc:
-                message = str(exc)
-                batch_result.skipped.append(
-                    render_manager.SkippedProfile(camera.name, message)
-                )
-                batch_result.errors.append(message)
-                self.report({"WARNING"}, message)
-
-        _set_status(context, None)
-
-        if scene.camera_output_write_report:
-            try:
-                base_path.mkdir(parents=True, exist_ok=True)
-                batch_result.report_path = render_manager.write_markdown_report(
-                    scene,
-                    batch_result,
-                    validation_result,
-                    base_path=base_path,
-                )
-            except OSError as exc:
-                batch_result.warnings.append(f"Could not write Markdown report: {exc}")
-                self.report({"WARNING"}, f"Could not write Markdown report: {exc}")
-
-        if not batch_result.rendered:
-            print(
-                "[Camera Output Profiles] Batch failed: "
-                f"0 rendered, {len(batch_result.skipped)} skipped."
-            )
-            self.report({"ERROR"}, "All enabled camera profile renders failed.")
-            return {"CANCELLED"}
-
-        if scene.camera_output_show_render_window:
-            render_manager.show_render_result()
-        if scene.camera_output_open_folder_after_render:
-            _open_folder(self, base_path)
-
-        print(
-            "[Camera Output Profiles] Batch complete: "
-            f"{len(batch_result.rendered)} rendered, "
-            f"{len(batch_result.skipped)} skipped."
-        )
-        report_label = (
-            batch_result.report_path.name
-            if batch_result.report_path is not None
-            else (
-                "report disabled"
-                if not scene.camera_output_write_report
-                else "report unavailable"
-            )
-        )
         self.report(
-            {"INFO"},
-            (
-                f"Rendered {len(batch_result.rendered)} profiles. "
-                f"Report: {report_label}"
-            ),
+            {"WARNING"},
+            "Batch rendering is temporarily disabled in v0.2.0.",
         )
-        return {"FINISHED"}
+        return {"CANCELLED"}
 
 
 CLASSES = (
@@ -554,5 +663,14 @@ CLASSES = (
     CAMERAOUTPUT_OT_open_output_folder,
     CAMERAOUTPUT_OT_open_final_output_folder,
     CAMERAOUTPUT_OT_render_profile,
+    CAMERAOUTPUT_OT_apply_view_preset,
+    CAMERAOUTPUT_OT_frame_target,
+    CAMERAOUTPUT_OT_create_target_empty,
+    CAMERAOUTPUT_OT_aim_at_target,
+    CAMERAOUTPUT_OT_add_tracking,
+    CAMERAOUTPUT_OT_remove_tracking,
+    CAMERAOUTPUT_OT_duplicate_camera_profile,
+    CAMERAOUTPUT_OT_create_camera_set,
+    CAMERAOUTPUT_OT_apply_lens_preset,
     CAMERAOUTPUT_OT_render_enabled,
 )

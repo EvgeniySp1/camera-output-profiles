@@ -24,6 +24,7 @@ def install_fake_bpy():
         "BoolProperty",
         "CollectionProperty",
         "EnumProperty",
+        "FloatProperty",
         "IntProperty",
         "PointerProperty",
         "StringProperty",
@@ -59,7 +60,11 @@ def install_fake_bpy():
     bpy.types = bpy_types
     bpy.data = types.SimpleNamespace(scenes=[])
     bpy.path = types.SimpleNamespace(abspath=lambda value: value)
-    bpy.app = types.SimpleNamespace(version_string="Fake Blender")
+    bpy.app = types.SimpleNamespace(
+        version_string="Fake Blender",
+        background=False,
+        handlers=types.SimpleNamespace(render_complete=[], render_cancel=[]),
+    )
     bpy.ops = types.SimpleNamespace()
     bpy.utils = types.SimpleNamespace(
         register_class=lambda cls: None,
@@ -69,6 +74,18 @@ def install_fake_bpy():
     sys.modules["bpy"] = bpy
     sys.modules["bpy.props"] = bpy_props
     sys.modules["bpy.types"] = bpy_types
+    mathutils = types.ModuleType("mathutils")
+
+    class Vector(tuple):
+        def __new__(cls, values):
+            return super().__new__(cls, values)
+
+    class Matrix:
+        pass
+
+    mathutils.Vector = Vector
+    mathutils.Matrix = Matrix
+    sys.modules["mathutils"] = mathutils
     return bpy
 
 
@@ -85,6 +102,8 @@ class BlenderImportSmokeTests(unittest.TestCase):
         sys.path[:] = cls.original_path
         for module_name in list(sys.modules):
             if module_name == "bpy" or module_name.startswith("bpy."):
+                sys.modules.pop(module_name, None)
+            if module_name == "mathutils":
                 sys.modules.pop(module_name, None)
             if module_name == "camera_output_profiles" or module_name.startswith(
                 "camera_output_profiles."
@@ -122,8 +141,97 @@ class BlenderImportSmokeTests(unittest.TestCase):
             hasattr(self.bpy.types.Scene, "camera_output_default_subfolder")
         )
         self.assertTrue(hasattr(self.bpy.types.Scene, "camera_output_write_report"))
+        self.assertTrue(hasattr(self.bpy.types.Scene, "camera_output_target_mode"))
+        self.assertTrue(
+            hasattr(self.bpy.types.Scene, "camera_output_distance_multiplier")
+        )
+        self.assertTrue(hasattr(self.bpy.types.Scene, "camera_output_camera_set_type"))
         self.addon.unregister()
         self.assertFalse(hasattr(self.bpy.types.Object, "camera_output_profile"))
+
+    def test_visible_render_session_blocks_duplicate_and_cleans_handlers(self):
+        manager = self.addon.render_manager
+        manager._ACTIVE_RENDER_JOB = types.SimpleNamespace()
+        self.assertTrue(manager.is_render_job_active())
+        manager.cleanup_render_session(restore=False)
+        self.assertFalse(manager.is_render_job_active())
+        self.assertNotIn(
+            manager._on_render_complete,
+            self.bpy.app.handlers.render_complete,
+        )
+        self.assertNotIn(
+            manager._on_render_cancel,
+            self.bpy.app.handlers.render_cancel,
+        )
+
+    def test_visible_render_defers_restore_until_complete_handler(self):
+        manager = self.addon.render_manager
+        image_settings = types.SimpleNamespace(
+            file_format="PNG",
+            color_mode="RGB",
+            quality=75,
+        )
+        render = types.SimpleNamespace(
+            resolution_x=640,
+            resolution_y=480,
+            resolution_percentage=50,
+            filepath="//original",
+            use_file_extension=True,
+            image_settings=image_settings,
+            film_transparent=False,
+        )
+        original_camera = types.SimpleNamespace(name="Original")
+        profile = types.SimpleNamespace(
+            width=3840,
+            height=2160,
+            file_format="PNG",
+            color_mode="RGBA",
+            quality=90,
+            transparent_background=True,
+            output_subfolder="camera_profiles",
+            filename_template="{camera}_{width}x{height}_{frame}",
+            use_current_frame=True,
+            frame=1,
+        )
+        camera = types.SimpleNamespace(
+            name="Camera_4K",
+            type="CAMERA",
+            data=object(),
+            camera_output_profile=profile,
+        )
+        scene = types.SimpleNamespace(
+            name="Scene",
+            camera=original_camera,
+            render=render,
+            frame_current=1,
+            camera_output_restore_scene_output=True,
+            camera_output_open_folder_after_render=False,
+            camera_output_write_report=False,
+            camera_output_show_render_window=False,
+        )
+        scene.frame_set = lambda value: setattr(scene, "frame_current", value)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            render.filepath = temp_dir
+            original_path = render.filepath
+            self.bpy.path.abspath = lambda value: value
+            self.bpy.ops.render = types.SimpleNamespace(
+                render=lambda *args, **kwargs: {"RUNNING_MODAL"}
+            )
+            start = manager.start_visible_render(scene, camera)
+            self.assertIn("RUNNING_MODAL", start.operator_result)
+            self.assertTrue(manager.is_render_job_active())
+            self.assertIs(scene.camera, camera)
+            self.assertEqual(render.resolution_x, 3840)
+            self.assertNotEqual(render.filepath, original_path)
+
+            manager._on_render_complete(scene)
+
+        self.assertFalse(manager.is_render_job_active())
+        self.assertIs(scene.camera, original_camera)
+        self.assertEqual(render.resolution_x, 640)
+        self.assertEqual(render.resolution_y, 480)
+        self.assertEqual(render.filepath, original_path)
 
     def test_validation_detects_duplicate_final_output_paths(self):
         class ObjectCollection(list):

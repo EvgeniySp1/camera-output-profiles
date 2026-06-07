@@ -5,6 +5,7 @@ from bpy.props import (
     BoolProperty,
     CollectionProperty,
     EnumProperty,
+    FloatProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -24,7 +25,7 @@ COLOR_MODE_ITEMS = (
 )
 
 VALIDATION_SEVERITY_ITEMS = (
-    ("CRITICAL", "Critical", "Blocks batch rendering"),
+    ("CRITICAL", "Critical", "Blocks rendering"),
     ("WARNING", "Warning", "Does not block rendering"),
     ("INFO", "Info", "Informational message"),
 )
@@ -61,7 +62,7 @@ class CameraOutputProfile(PropertyGroup):
 
     enabled: BoolProperty(
         name="Enabled",
-        description="Include this camera in batch rendering",
+        description="Enable this camera output profile",
         default=True,
     )
 
@@ -138,6 +139,12 @@ class CameraOutputProfile(PropertyGroup):
         set=_set_frame,
     )
 
+    tracking_target: PointerProperty(
+        name="Camera Target",
+        description="Target Empty used by Camera Output Profiles tracking",
+        type=bpy.types.Object,
+    )
+
 
 class CameraOutputValidationItem(PropertyGroup):
     severity: EnumProperty(
@@ -206,14 +213,74 @@ def register_properties() -> None:
     bpy.types.Scene.camera_output_write_report = BoolProperty(
         name="Write Markdown Report",
         description=(
-            "Write CAMERA_OUTPUT_PROFILES_REPORT.md after batch rendering"
+            "Write CAMERA_OUTPUT_PROFILES_REPORT.md after a profile render"
         ),
+        default=True,
+    )
+    bpy.types.Scene.camera_output_target_mode = EnumProperty(
+        name="Target Mode",
+        description="How camera placement tools resolve their target",
+        items=(
+            ("SELECTED", "Selected Object", "Use selected non-camera objects"),
+            ("ACTIVE", "Active Object", "Use the active non-camera object"),
+            ("CAMERA_TARGET", "Camera Target Empty", "Use the camera's saved target"),
+            ("SCENE_CENTER", "Scene Center", "Use the world origin"),
+            ("VISIBLE", "All Visible Objects", "Use all visible non-camera objects"),
+        ),
+        default="SELECTED",
+    )
+    bpy.types.Scene.camera_output_distance_multiplier = FloatProperty(
+        name="Distance Multiplier",
+        description="Distance from target relative to its bounding radius",
+        default=3.0,
+        min=0.1,
+        soft_max=20.0,
+    )
+    bpy.types.Scene.camera_output_height_offset = FloatProperty(
+        name="Height Offset",
+        description="Additional world-space Z offset for camera view presets",
+        default=0.0,
+        soft_min=-100.0,
+        soft_max=100.0,
+    )
+    bpy.types.Scene.camera_output_margin = FloatProperty(
+        name="Margin",
+        description="Extra framing margin as a percentage",
+        default=15.0,
+        min=0.0,
+        max=200.0,
+        subtype="PERCENTAGE",
+    )
+    bpy.types.Scene.camera_output_copy_tracking = BoolProperty(
+        name="Copy Tracking",
+        description="Copy Camera Output Profiles tracking when duplicating a camera",
+        default=False,
+    )
+    bpy.types.Scene.camera_output_camera_set_type = EnumProperty(
+        name="Camera Set",
+        items=(
+            ("PRODUCT_BASIC", "Product Basic", "Front, 3/4 Front, Side and Top"),
+            ("PRODUCT_FULL", "Product Full", "Six product camera views"),
+            ("SOCIAL_PACK", "Social Pack", "Hero, square and vertical outputs"),
+        ),
+        default="PRODUCT_BASIC",
+    )
+    bpy.types.Scene.camera_output_camera_set_add_tracking = BoolProperty(
+        name="Add Tracking",
+        description="Create a shared target and track it from new camera-set cameras",
         default=True,
     )
 
 
 def unregister_properties() -> None:
     for owner, attribute in (
+        (bpy.types.Scene, "camera_output_camera_set_add_tracking"),
+        (bpy.types.Scene, "camera_output_camera_set_type"),
+        (bpy.types.Scene, "camera_output_copy_tracking"),
+        (bpy.types.Scene, "camera_output_margin"),
+        (bpy.types.Scene, "camera_output_height_offset"),
+        (bpy.types.Scene, "camera_output_distance_multiplier"),
+        (bpy.types.Scene, "camera_output_target_mode"),
         (bpy.types.Scene, "camera_output_write_report"),
         (bpy.types.Scene, "camera_output_default_subfolder"),
         (bpy.types.Scene, "camera_output_restore_scene_output"),

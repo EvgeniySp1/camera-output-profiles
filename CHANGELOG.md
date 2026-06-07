@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## v0.2.0
+
+- Added visible single-profile rendering mode
+- Added render completion/cancel restore handling
+- Temporarily disabled batch rendering until visible render queue is implemented
+- Added camera view presets around target
+- Added Frame Selected / Fit Object to Camera tools
+- Added Camera Target Empty tools
+- Added Track To target support
+- Added Duplicate Camera with Profile
+- Added Create Camera Set presets
+- Added per-camera lens presets
+- Improved validation for camera workflow tools
+- Updated documentation and testing checklist
+
 ## v0.1.2 - unreleased
 
 - Reduced the visible N-panel to quick workflow controls

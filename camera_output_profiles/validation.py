@@ -158,9 +158,17 @@ def validate_scene(
     store: bool = True,
     now: datetime | None = None,
     selected_camera: bpy.types.Object | None = None,
+    target_objects: Iterable[bpy.types.Object] | None = None,
 ) -> ValidationResult:
     """Validate camera output profiles for the scene."""
     result = ValidationResult()
+    from . import camera_tools, render_manager
+
+    if render_manager.is_render_job_active():
+        result.add(
+            SEVERITY_CRITICAL,
+            "Camera Output Profiles render is already running.",
+        )
     all_scene_cameras = iter_scene_cameras(scene)
     selected_cameras = list(cameras) if cameras is not None else all_scene_cameras
 
@@ -327,6 +335,78 @@ def validate_scene(
                 "Scene Output."
             ),
             selected_camera.name,
+        )
+
+    if (
+        selected_camera is not None
+        and getattr(selected_camera, "type", None) == "CAMERA"
+        and getattr(selected_camera, "data", None) is not None
+    ):
+        profile = selected_camera.camera_output_profile
+        target = getattr(profile, "tracking_target", None)
+        constraints = getattr(selected_camera, "constraints", None)
+        constraint = (
+            constraints.get(camera_tools.TRACK_CONSTRAINT_NAME)
+            if constraints is not None
+            else None
+        )
+        if constraint is not None and getattr(constraint, "target", None) is None:
+            result.add(
+                SEVERITY_WARNING,
+                "Track To constraint target is missing.",
+                selected_camera.name,
+            )
+        elif constraint is not None and target is None:
+            result.add(
+                SEVERITY_WARNING,
+                "Target Empty is missing but camera tracking is enabled.",
+                selected_camera.name,
+            )
+        if target is not None:
+            try:
+                if (
+                    selected_camera.matrix_world.translation
+                    - target.matrix_world.translation
+                ).length < 1.0e-6:
+                    result.add(
+                        SEVERITY_WARNING,
+                        "Camera and target are at the same location.",
+                        selected_camera.name,
+                    )
+            except Exception:
+                pass
+        result.add(
+            SEVERITY_INFO,
+            f"Target mode: {getattr(scene, 'camera_output_target_mode', 'SELECTED')}",
+            selected_camera.name,
+        )
+        result.add(
+            SEVERITY_INFO,
+            f"Tracking: {'active' if constraint is not None else 'inactive'}",
+            selected_camera.name,
+        )
+        if not result.has_critical:
+            result.add(SEVERITY_INFO, "Selected camera is ready.", selected_camera.name)
+
+    if target_objects:
+        try:
+            target_bounds = camera_tools.world_bounds(target_objects)
+            if target_bounds.dimensions.length < 1.0e-6:
+                result.add(
+                    SEVERITY_WARNING,
+                    "Selected target has zero dimensions; a safe default size will be used.",
+                )
+        except ValueError:
+            pass
+
+    result.add(
+        SEVERITY_WARNING,
+        "Batch rendering is disabled in v0.2.0 while the visible render queue is redesigned.",
+    )
+    if getattr(bpy.app, "background", False):
+        result.add(
+            SEVERITY_WARNING,
+            "Visible render mode is unavailable in background mode; fallback may be used.",
         )
 
     if cameras is None and all_scene_cameras and enabled_count == 0:
