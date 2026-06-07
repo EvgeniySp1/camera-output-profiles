@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+*.zip
+*.blend1
+*.blend2
+*.blend@
+.DS_Store
+Thumbs.db
