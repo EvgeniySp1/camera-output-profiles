@@ -1,13 +1,18 @@
-"""3D View sidebar UI for Camera Output Profiles."""
+"""Blender UI panels for Camera Output Profiles."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import bpy
 from bpy.types import Panel
 
 from . import operators, render_manager, utils, validation
+
+
+ADDON_VERSION_LABEL = "Camera Output Profiles v0.1.2-unreleased"
+TOKEN_HELP = (
+    "Tokens: {camera}, {scene}, {width}, {height}, "
+    "{frame}, {format}, {date}"
+)
 
 
 def _validation_icon(severity: str) -> str:
@@ -18,31 +23,134 @@ def _validation_icon(severity: str) -> str:
     }.get(severity, "INFO")
 
 
-def _draw_validation_status(layout, scene: bpy.types.Scene) -> None:
-    critical = scene.camera_output_validation_critical_count
-    warnings = scene.camera_output_validation_warning_count
-    summary = scene.camera_output_validation_summary
+def _selected_camera(context: bpy.types.Context) -> bpy.types.Object | None:
+    return operators.active_or_selected_camera(context)
 
+
+def _draw_validation_status(layout, scene: bpy.types.Scene) -> None:
     row = layout.row()
     if not scene.camera_output_validation_timestamp:
         row.label(text="Validation: Not validated", icon="INFO")
-    elif critical:
+    elif scene.camera_output_validation_critical_count:
         row.alert = True
-        row.label(text=f"Validation: {summary}", icon="ERROR")
-    elif warnings:
-        row.label(text=f"Validation: {summary}", icon="ERROR")
+        row.label(
+            text=f"Validation: {scene.camera_output_validation_summary}",
+            icon="ERROR",
+        )
+    elif scene.camera_output_validation_warning_count:
+        row.label(
+            text=f"Validation: {scene.camera_output_validation_summary}",
+            icon="ERROR",
+        )
     else:
-        row.label(text=f"Validation: {summary}", icon="CHECKMARK")
+        row.label(
+            text=f"Validation: {scene.camera_output_validation_summary}",
+            icon="CHECKMARK",
+        )
 
 
-def _draw_wrapped_path(layout, path: Path | str, *, width: int = 48) -> None:
-    text = str(path)
-    for index in range(0, len(text), width):
-        layout.label(text=text[index : index + width])
+def _draw_validation_messages(layout, scene: bpy.types.Scene, limit: int = 12) -> None:
+    results = scene.camera_output_validation_results
+    if not results:
+        layout.label(text="No validation run yet.", icon="INFO")
+        return
+
+    for index, item in enumerate(results):
+        if index >= limit:
+            break
+        label = item.message
+        if item.camera_name:
+            label = f"{item.camera_name}: {label}"
+        layout.label(text=label, icon=_validation_icon(item.severity))
+
+    if len(results) > limit:
+        layout.label(text=f"{len(results) - limit} more messages...", icon="INFO")
 
 
-def _selected_camera(context: bpy.types.Context) -> bpy.types.Object | None:
-    return operators.active_or_selected_camera(context)
+def _draw_compact_final_path(
+    layout,
+    scene: bpy.types.Scene,
+    camera: bpy.types.Object,
+) -> None:
+    layout.label(text="Final Render Path:")
+    try:
+        final_path = render_manager.output_path_for_profile(scene, camera)
+        compact = utils.compact_path(final_path, max_length=88)
+        midpoint = min(44, len(compact))
+        layout.label(text=compact[:midpoint])
+        if len(compact) > midpoint:
+            layout.label(text=compact[midpoint:])
+    except (ValueError, utils.TemplateError) as exc:
+        row = layout.row()
+        row.alert = True
+        row.label(text=str(exc), icon="ERROR")
+
+
+def _draw_profile_actions(
+    layout,
+    camera: bpy.types.Object,
+    *,
+    prominent: bool = False,
+) -> None:
+    render_row = layout.row()
+    if prominent:
+        render_row.scale_y = 1.25
+    render_op = render_row.operator(
+        "camera_output.render_profile",
+        text="Render This Profile",
+        icon="RENDER_STILL",
+    )
+    render_op.camera_name = camera.name
+
+    apply_op = layout.operator(
+        "camera_output.apply_profile_to_scene",
+        text="Apply Profile to Scene Output",
+    )
+    apply_op.camera_name = camera.name
+
+
+def _draw_profile_fields(layout, profile) -> None:
+    layout.prop(profile, "enabled", text="Enabled")
+
+    resolution = layout.row(align=True)
+    resolution.prop(profile, "width", text="Width")
+    resolution.prop(profile, "height", text="Height")
+    layout.label(
+        text=f"Aspect Ratio: {utils.aspect_ratio_label(profile.width, profile.height)}"
+    )
+
+    format_row = layout.row(align=True)
+    format_row.prop(profile, "file_format", text="File Format")
+    format_row.prop(profile, "color_mode", text="Color Mode")
+    if profile.file_format in {"JPEG", "WEBP"}:
+        layout.prop(profile, "quality", text="Quality")
+
+    layout.prop(
+        profile,
+        "transparent_background",
+        text="Transparent Background",
+    )
+    layout.prop(profile, "output_subfolder", text="Output Subfolder")
+    layout.prop(profile, "filename_template", text="Filename Template")
+
+    frame_row = layout.row(align=True)
+    frame_row.prop(profile, "use_current_frame", text="Use Current Frame")
+    if not profile.use_current_frame:
+        frame_row.prop(profile, "frame", text="Frame")
+
+
+def _draw_presets(layout, enabled: bool) -> None:
+    layout.label(text="Presets")
+    grid = layout.grid_flow(
+        row_major=True,
+        columns=2,
+        even_columns=True,
+        align=True,
+    )
+    grid.enabled = enabled
+    for identifier, (label, _, _) in operators.PRESETS.items():
+        op = grid.operator("camera_output.apply_preset", text=label)
+        op.preset = identifier
 
 
 class CAMERAOUTPUT_PT_main(Panel):
@@ -55,209 +163,64 @@ class CAMERAOUTPUT_PT_main(Panel):
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         scene = context.scene
-        cameras = validation.iter_scene_cameras(scene)
-        enabled_count = sum(
-            1 for camera in cameras if camera.camera_output_profile.enabled
-        )
-        selected_camera = _selected_camera(context)
+        camera = _selected_camera(context)
 
-        layout.label(text="Camera Output Profiles v0.1.1", icon="CAMERA_DATA")
-        layout.label(text=f"Cameras: {len(cameras)} | Enabled: {enabled_count}")
+        layout.label(text=ADDON_VERSION_LABEL, icon="CAMERA_DATA")
 
-        explanation = layout.box()
-        explanation.label(text="Camera profiles are separate from Blender's")
-        explanation.label(text="global Output settings. Presets edit only the")
-        explanation.label(text="selected camera profile. Add-on renders apply")
-        explanation.label(text="it temporarily; use Apply Profile to Scene Output")
-        explanation.label(text="to sync Blender's Format panel.")
-
-        self._draw_output_section(layout, scene, selected_camera)
-        self._draw_global_controls(layout, scene)
-        self._draw_render_behavior(layout, scene)
-        self._draw_presets(layout, selected_camera)
-
-        if selected_camera is not None:
-            self._draw_selected_profile(layout, scene, selected_camera)
+        if camera is None:
+            layout.label(text="Selected Camera: None", icon="INFO")
+            layout.label(text="Select a camera to use profile actions.")
         else:
-            box = layout.box()
-            box.label(text="Selected Camera Profile: None", icon="INFO")
-            box.label(text="Select a camera to edit or render its profile.")
-
-        self._draw_camera_list(layout, cameras)
-
-    def _draw_output_section(
-        self,
-        layout,
-        scene: bpy.types.Scene,
-        selected_camera: bpy.types.Object | None,
-    ) -> None:
-        output = layout.box()
-        output.label(text="Output")
-        output.label(text="Base Output Folder:")
-        output.prop(scene.render, "filepath", text="")
-
-        try:
-            base_path = utils.resolve_output_base(scene.render.filepath, bpy.path.abspath)
-            _draw_wrapped_path(output, base_path)
-        except ValueError as exc:
-            row = output.row()
-            row.alert = True
-            row.label(text=str(exc), icon="ERROR")
-
-        row = output.row(align=True)
-        row.operator(
-            "camera_output.choose_base_output_folder",
-            text="Choose Base Output Folder",
-        )
-        row.operator(
-            "camera_output.open_output_folder",
-            text="Open Base Output Folder",
-        )
-
-        output.separator()
-        output.label(
-            text=(
-                f"Scene Output: {scene.render.resolution_x} x "
-                f"{scene.render.resolution_y} @ "
-                f"{scene.render.resolution_percentage}% | "
-                f"{scene.render.image_settings.file_format}"
-            )
-        )
-
-        if selected_camera is not None:
-            output.label(
+            profile = camera.camera_output_profile
+            layout.label(text=f"Selected Camera: {camera.name}", icon="CAMERA_DATA")
+            enabled_label = "Enabled" if profile.enabled else "Disabled"
+            layout.label(
                 text=(
-                    "Default Subfolder: "
-                    f"{selected_camera.camera_output_profile.output_subfolder or '(none)'}"
+                    f"Profile: {profile.width} x {profile.height} | "
+                    f"{utils.aspect_ratio_label(profile.width, profile.height)} | "
+                    f"{profile.file_format} | {enabled_label}"
                 )
             )
+            _draw_compact_final_path(layout, scene, camera)
+            _draw_profile_actions(layout, camera, prominent=True)
 
-    def _draw_global_controls(self, layout, scene: bpy.types.Scene) -> None:
-        controls = layout.box()
-        controls.label(text="Global Controls")
-        controls.operator(
-            "camera_output.add_profiles",
-            text="Add / Refresh Camera Profiles",
-        )
-        row = controls.row(align=True)
-        row.operator("camera_output.enable_all", text="Enable All Profiles")
-        row.operator("camera_output.disable_all", text="Disable All Profiles")
-        controls.operator(
-            "camera_output.validate_profiles",
-            text="Validate Profiles",
-        )
-        render_row = controls.row()
-        render_row.scale_y = 1.25
-        render_row.operator(
+        presets = layout.box()
+        _draw_presets(presets, camera is not None)
+
+        batch_row = layout.row()
+        batch_row.scale_y = 1.15
+        batch_row.operator(
             "camera_output.render_enabled",
             text="Render All Enabled Profiles",
             icon="RENDER_STILL",
         )
-        _draw_validation_status(controls, scene)
-
-    def _draw_render_behavior(self, layout, scene: bpy.types.Scene) -> None:
-        behavior = layout.box()
-        behavior.label(text="Render Behavior")
-        behavior.prop(scene, "camera_output_show_render_window")
-        behavior.prop(scene, "camera_output_open_folder_after_render")
-        behavior.prop(scene, "camera_output_restore_scene_output")
-
-    def _draw_presets(
-        self,
-        layout,
-        selected_camera: bpy.types.Object | None,
-    ) -> None:
-        presets = layout.box()
-        presets.label(text="Presets for Selected Camera")
-        grid = presets.grid_flow(
-            row_major=True,
-            columns=2,
-            even_columns=True,
-            align=True,
-        )
-        grid.enabled = selected_camera is not None
-        for identifier, (label, _, _) in operators.PRESETS.items():
-            op = grid.operator("camera_output.apply_preset", text=label)
-            op.preset = identifier
-        presets.label(text="Presets edit the camera profile only.")
-        presets.label(text="Use Apply Profile to Scene Output to sync")
-        presets.label(text="Blender's Format panel.")
-
-    def _draw_selected_profile(
-        self,
-        layout,
-        scene: bpy.types.Scene,
-        camera: bpy.types.Object,
-    ) -> None:
-        profile = camera.camera_output_profile
-        box = layout.box()
-        box.label(text=f"Selected Camera Profile: {camera.name}", icon="CAMERA_DATA")
-        box.prop(profile, "enabled", text="Enabled")
-
-        resolution = box.row(align=True)
-        resolution.prop(profile, "width", text="Width")
-        resolution.prop(profile, "height", text="Height")
-        box.label(
-            text=f"Aspect Ratio: {utils.aspect_ratio_label(profile.width, profile.height)}"
+        layout.operator(
+            "camera_output.validate_profiles",
+            text="Validate Profiles",
         )
 
-        format_row = box.row(align=True)
-        format_row.prop(profile, "file_format", text="File Format")
-        format_row.prop(profile, "color_mode", text="Color Mode")
-        if profile.file_format in {"JPEG", "WEBP"}:
-            box.prop(profile, "quality", text="Quality")
 
-        box.prop(profile, "transparent_background", text="Transparent Background")
+class CAMERAOUTPUT_PT_camera_list(Panel):
+    bl_idname = "CAMERAOUTPUT_PT_camera_list"
+    bl_label = "Camera List"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Cam Output"
+    bl_parent_id = "CAMERAOUTPUT_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
 
-        box.label(text="Output Subfolder:")
-        box.prop(profile, "output_subfolder", text="")
-        box.label(text="Optional folder inside the Base Output Folder.")
-        box.label(text="Leave empty to save directly in the base folder.")
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        cameras = validation.iter_scene_cameras(context.scene)
 
-        box.label(text="Filename Template:")
-        box.prop(profile, "filename_template", text="")
-        box.label(
-            text="Tokens: {camera}, {scene}, {width}, {height}, {frame}, {format}, {date}"
+        layout.operator(
+            "camera_output.add_profiles",
+            text="Add / Refresh Camera Profiles",
         )
+        row = layout.row(align=True)
+        row.operator("camera_output.enable_all", text="Enable All Profiles")
+        row.operator("camera_output.disable_all", text="Disable All Profiles")
 
-        frame_row = box.row(align=True)
-        frame_row.prop(profile, "use_current_frame", text="Use Current Frame")
-        if not profile.use_current_frame:
-            frame_row.prop(profile, "frame", text="Frame")
-
-        box.separator()
-        box.label(text="Final Render Path:")
-        try:
-            final_path = render_manager.output_path_for_profile(scene, camera)
-            _draw_wrapped_path(box, final_path)
-        except (ValueError, utils.TemplateError) as exc:
-            row = box.row()
-            row.alert = True
-            row.label(text=str(exc), icon="ERROR")
-
-        render_row = box.row()
-        render_row.scale_y = 1.3
-        render_op = render_row.operator(
-            "camera_output.render_profile",
-            text="Render This Profile",
-            icon="RENDER_STILL",
-        )
-        render_op.camera_name = camera.name
-
-        apply_op = box.operator(
-            "camera_output.apply_profile_to_scene",
-            text="Apply Profile to Scene Output",
-        )
-        apply_op.camera_name = camera.name
-
-        open_op = box.operator(
-            "camera_output.open_final_output_folder",
-            text="Open Final Output Folder",
-        )
-        open_op.camera_name = camera.name
-
-    def _draw_camera_list(self, layout, cameras: list[bpy.types.Object]) -> None:
-        layout.label(text=f"Camera List ({len(cameras)})", icon="OUTLINER_OB_CAMERA")
         if not cameras:
             layout.label(text="No cameras in scene.", icon="INFO")
             return
@@ -268,14 +231,13 @@ class CAMERAOUTPUT_PT_main(Panel):
             header = box.row(align=True)
             header.prop(profile, "enabled", text="")
             header.label(text=camera.name, icon="CAMERA_DATA")
-
-            details = box.row(align=True)
-            details.label(text=f"{profile.width} x {profile.height}")
-            details.label(
-                text=utils.aspect_ratio_label(profile.width, profile.height)
+            box.label(
+                text=(
+                    f"{profile.width} x {profile.height} | "
+                    f"{utils.aspect_ratio_label(profile.width, profile.height)} | "
+                    f"{profile.file_format}"
+                )
             )
-            details.label(text=profile.file_format)
-
             actions = box.row(align=True)
             select_op = actions.operator(
                 "camera_output.select_camera",
@@ -289,6 +251,44 @@ class CAMERAOUTPUT_PT_main(Panel):
             render_op.camera_name = camera.name
 
 
+class CAMERAOUTPUT_PT_help(Panel):
+    bl_idname = "CAMERAOUTPUT_PT_help"
+    bl_label = "Help"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Cam Output"
+    bl_parent_id = "CAMERAOUTPUT_PT_main"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        layout.label(text="Camera profiles are separate from Blender's")
+        layout.label(text="global Scene Output settings.")
+        layout.label(text="Presets edit only the selected camera profile.")
+        layout.label(text="Rendering applies the profile temporarily.")
+        layout.label(text="Use Apply Profile to Scene Output to sync")
+        layout.label(text="Blender's Format panel manually.")
+        layout.separator()
+        layout.label(text=TOKEN_HELP)
+        layout.label(text="Output Subfolder is relative to Base Output Folder.")
+
+
+class CAMERAOUTPUT_PT_validation_errors(Panel):
+    bl_idname = "CAMERAOUTPUT_PT_validation_errors"
+    bl_label = "Validation Errors"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Cam Output"
+    bl_parent_id = "CAMERAOUTPUT_PT_main"
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return context.scene.camera_output_validation_critical_count > 0
+
+    def draw(self, context: bpy.types.Context) -> None:
+        _draw_validation_messages(self.layout, context.scene)
+
+
 class CAMERAOUTPUT_PT_validation_results(Panel):
     bl_idname = "CAMERAOUTPUT_PT_validation_results"
     bl_label = "Validation Results"
@@ -298,26 +298,94 @@ class CAMERAOUTPUT_PT_validation_results(Panel):
     bl_parent_id = "CAMERAOUTPUT_PT_main"
     bl_options = {"DEFAULT_CLOSED"}
 
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return context.scene.camera_output_validation_critical_count == 0
+
+    def draw(self, context: bpy.types.Context) -> None:
+        _draw_validation_messages(self.layout, context.scene)
+
+
+class CAMERAOUTPUT_PT_camera_profile(Panel):
+    bl_idname = "CAMERAOUTPUT_PT_camera_profile"
+    bl_label = "Camera Output Profile"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        obj = getattr(context, "object", None)
+        return obj is not None and getattr(obj, "type", None) == "CAMERA"
+
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        results = context.scene.camera_output_validation_results
-        if not results:
-            layout.label(text="No validation run yet.", icon="INFO")
-            return
+        camera = context.object
+        profile = camera.camera_output_profile
 
-        for index, item in enumerate(results):
-            if index >= 12:
-                break
-            label = item.message
-            if item.camera_name:
-                label = f"{item.camera_name}: {label}"
-            layout.label(text=label, icon=_validation_icon(item.severity))
+        _draw_profile_fields(layout, profile)
+        layout.separator()
+        _draw_compact_final_path(layout, context.scene, camera)
+        _draw_profile_actions(layout, camera)
 
-        if len(results) > 12:
-            layout.label(text=f"{len(results) - 12} more messages...", icon="INFO")
+
+class CAMERAOUTPUT_PT_scene_settings(Panel):
+    bl_idname = "CAMERAOUTPUT_PT_scene_settings"
+    bl_label = "Camera Output Profiles Settings"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "output"
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        scene = context.scene
+
+        layout.label(text="Base Output Folder")
+        layout.prop(scene.render, "filepath", text="")
+        row = layout.row(align=True)
+        row.operator(
+            "camera_output.choose_base_output_folder",
+            text="Choose Base Output Folder",
+        )
+        row.operator(
+            "camera_output.open_output_folder",
+            text="Open Base Output Folder",
+        )
+
+        layout.prop(
+            scene,
+            "camera_output_default_subfolder",
+            text="Default Output Subfolder",
+        )
+        layout.separator()
+        layout.prop(scene, "camera_output_show_render_window")
+        layout.prop(scene, "camera_output_open_folder_after_render")
+        layout.prop(scene, "camera_output_restore_scene_output")
+
+        report_box = layout.box()
+        report_box.label(text="Report Settings")
+        report_box.prop(
+            scene,
+            "camera_output_write_report",
+            text="Write Markdown Report",
+        )
+        report_box.label(text=render_manager.REPORT_FILENAME)
+
+        validation_box = layout.box()
+        validation_box.label(text="Validation Status")
+        _draw_validation_status(validation_box, scene)
+        validation_box.operator(
+            "camera_output.validate_profiles",
+            text="Validate Profiles",
+        )
 
 
 CLASSES = (
     CAMERAOUTPUT_PT_main,
+    CAMERAOUTPUT_PT_camera_list,
+    CAMERAOUTPUT_PT_help,
+    CAMERAOUTPUT_PT_validation_errors,
     CAMERAOUTPUT_PT_validation_results,
+    CAMERAOUTPUT_PT_camera_profile,
+    CAMERAOUTPUT_PT_scene_settings,
 )

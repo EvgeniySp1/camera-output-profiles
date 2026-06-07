@@ -86,3 +86,18 @@ Expected:
 - output filename contains camera name, width, height and frame
 - no asterisks
 - no broken shortened tokens
+
+### Test 7: Panel locations and compact N-panel
+
+1. Open N-panel > Cam Output.
+2. Confirm the main panel shows only selected-camera summary, final path, presets, render/apply actions, batch render, and validation.
+3. Confirm Camera List and Help are collapsed by default.
+4. Open Properties > Camera Data.
+5. Open Properties > Output.
+
+Expected:
+
+- full profile fields appear under Camera Output Profile in Camera Data
+- global settings appear under Camera Output Profiles Settings in Output Properties
+- long explanations and filename token help are not permanently visible in the main N-panel
+- validation results are collapsed unless critical errors exist

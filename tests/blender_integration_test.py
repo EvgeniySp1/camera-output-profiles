@@ -82,6 +82,18 @@ def main() -> None:
     camera_square = add_camera("Camera_Square", (5.0, -5.0, 5.0))
     camera_vertical = add_camera("Camera_Vertical", (4.5, -4.5, 3.5))
 
+    assert scene.camera_output_default_subfolder == "camera_profiles"
+    assert scene.camera_output_write_report is True
+    scene.camera_output_default_subfolder = "new_profile_default"
+    camera_front.camera_output_profile.output_subfolder = "old_value"
+    add_profiles_result = bpy.ops.camera_output.add_profiles()
+    assert add_profiles_result == {"FINISHED"}, add_profiles_result
+    assert (
+        camera_front.camera_output_profile.output_subfolder
+        == "new_profile_default"
+    )
+    scene.camera_output_default_subfolder = "camera_profiles"
+
     assert (
         camera_front.camera_output_profile.filename_template
         == "{camera}_{width}x{height}_{frame}"
@@ -183,6 +195,13 @@ def main() -> None:
 
         restored = render_manager.capture_scene_settings(scene)
         assert restored == original, (original, restored)
+
+        report_path.unlink()
+        scene.camera_output_write_report = False
+        no_report_result = bpy.ops.camera_output.render_enabled()
+        assert no_report_result == {"FINISHED"}, no_report_result
+        assert not report_path.exists()
+        scene.camera_output_write_report = True
 
         camera_front.camera_output_profile.filename_template = "duplicate"
         camera_square.camera_output_profile.filename_template = "duplicate"

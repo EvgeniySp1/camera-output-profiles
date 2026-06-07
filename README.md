@@ -2,7 +2,7 @@
 
 Open-source Blender add-on for per-camera render resolution, aspect ratio, file naming, and output profiles.
 
-> Development version: v0.1.1, unreleased. Test locally before publishing.
+> Development version: v0.1.2, unreleased. Test locally before publishing.
 
 ## How It Works
 
@@ -28,6 +28,9 @@ This separation is intentional:
 - Validation for paths, frames, formats, templates, duplicate outputs, and overwrite risk
 - Automatic scene restoration through `try/finally`
 - Markdown batch report at `CAMERA_OUTPUT_PROFILES_REPORT.md`
+- Compact quick-workflow N-panel
+- Full profile editing in Camera Data Properties
+- Global settings in Output Properties
 
 ## Installation
 
@@ -44,13 +47,19 @@ For local testing, reinstall the ZIP after code changes or temporarily add the r
 
 1. Select a camera.
 2. Open **N-panel > Cam Output**.
-3. Click **Add / Refresh Camera Profiles**.
+3. Expand **Camera List** and click **Add / Refresh Camera Profiles**.
 4. Choose a preset, for example **4K 16:9**.
 5. Check **Final Render Path**.
 6. Click **Render This Profile**.
 7. Find the output in the shown folder.
 
 The 4K preset changes the selected camera profile to 3840 x 2160. Blender's native Scene Output may remain 1920 x 1080 until **Apply Profile to Scene Output** is clicked.
+
+## UI Locations
+
+- **3D Viewport > N-panel > Cam Output**: selected-camera summary, presets, final path, render/apply actions, batch render, validation, collapsed Camera List, and collapsed Help.
+- **Properties > Camera Data > Camera Output Profile**: complete profile editor for the selected camera.
+- **Properties > Output > Camera Output Profiles Settings**: Base Output Folder, default subfolder, render behavior, validation status, and Markdown report setting.
 
 ## Output Paths
 
@@ -119,11 +128,11 @@ Warnings do not block rendering:
 
 ## Limitations
 
-- v0.1.1 still renders still images only.
+- v0.1.2 still renders still images only.
 - Animation frame-range profiles are planned.
 - Render engine and sample overrides are planned.
 - WebP depends on the installed Blender build.
-- v0.1.1 must be manually verified in Blender 5.1.2 before release.
+- v0.1.2 must be manually verified in Blender 5.1.2 before release.
 
 ## Testing
 

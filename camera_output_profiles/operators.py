@@ -67,6 +67,7 @@ def _initialize_camera_profile(
     profile = camera.camera_output_profile
     if force_frame or not profile.initialized:
         profile.frame = scene.frame_current
+        profile.output_subfolder = scene.camera_output_default_subfolder
     if profile.filename_template == LEGACY_FILENAME_TEMPLATE:
         profile.filename_template = DEFAULT_FILENAME_TEMPLATE
     profile.initialized = True
@@ -491,17 +492,18 @@ class CAMERAOUTPUT_OT_render_enabled(Operator):
 
         _set_status(context, None)
 
-        try:
-            base_path.mkdir(parents=True, exist_ok=True)
-            batch_result.report_path = render_manager.write_markdown_report(
-                scene,
-                batch_result,
-                validation_result,
-                base_path=base_path,
-            )
-        except OSError as exc:
-            batch_result.warnings.append(f"Could not write Markdown report: {exc}")
-            self.report({"WARNING"}, f"Could not write Markdown report: {exc}")
+        if scene.camera_output_write_report:
+            try:
+                base_path.mkdir(parents=True, exist_ok=True)
+                batch_result.report_path = render_manager.write_markdown_report(
+                    scene,
+                    batch_result,
+                    validation_result,
+                    base_path=base_path,
+                )
+            except OSError as exc:
+                batch_result.warnings.append(f"Could not write Markdown report: {exc}")
+                self.report({"WARNING"}, f"Could not write Markdown report: {exc}")
 
         if not batch_result.rendered:
             print(
@@ -524,7 +526,11 @@ class CAMERAOUTPUT_OT_render_enabled(Operator):
         report_label = (
             batch_result.report_path.name
             if batch_result.report_path is not None
-            else "report unavailable"
+            else (
+                "report disabled"
+                if not scene.camera_output_write_report
+                else "report unavailable"
+            )
         )
         self.report(
             {"INFO"},

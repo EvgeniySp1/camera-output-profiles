@@ -195,10 +195,27 @@ def register_properties() -> None:
         ),
         default=True,
     )
+    bpy.types.Scene.camera_output_default_subfolder = StringProperty(
+        name="Default Output Subfolder",
+        description=(
+            "Output subfolder assigned to newly initialized camera profiles. "
+            "Existing profiles are not changed"
+        ),
+        default="camera_profiles",
+    )
+    bpy.types.Scene.camera_output_write_report = BoolProperty(
+        name="Write Markdown Report",
+        description=(
+            "Write CAMERA_OUTPUT_PROFILES_REPORT.md after batch rendering"
+        ),
+        default=True,
+    )
 
 
 def unregister_properties() -> None:
     for owner, attribute in (
+        (bpy.types.Scene, "camera_output_write_report"),
+        (bpy.types.Scene, "camera_output_default_subfolder"),
         (bpy.types.Scene, "camera_output_restore_scene_output"),
         (bpy.types.Scene, "camera_output_open_folder_after_render"),
         (bpy.types.Scene, "camera_output_show_render_window"),

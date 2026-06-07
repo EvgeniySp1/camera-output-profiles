@@ -118,6 +118,10 @@ class BlenderImportSmokeTests(unittest.TestCase):
         self.assertTrue(
             hasattr(self.bpy.types.Scene, "camera_output_restore_scene_output")
         )
+        self.assertTrue(
+            hasattr(self.bpy.types.Scene, "camera_output_default_subfolder")
+        )
+        self.assertTrue(hasattr(self.bpy.types.Scene, "camera_output_write_report"))
         self.addon.unregister()
         self.assertFalse(hasattr(self.bpy.types.Object, "camera_output_profile"))
 

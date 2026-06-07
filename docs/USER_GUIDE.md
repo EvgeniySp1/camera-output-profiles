@@ -20,17 +20,31 @@ Use **Apply Profile to Scene Output** when you explicitly want Blender's Format 
 
 ## Interface Overview
 
-The panel shows:
+### N-panel > Cam Output
 
-- Add-on version, camera count, and enabled profile count
-- Explanation of profile-vs-scene behavior
-- Base Output Folder and current Scene Output
-- Global profile controls
-- Render behavior controls
-- Presets for the selected camera
-- Full selected-camera profile editor
+The compact workflow panel shows:
+
+- Selected camera and profile summary
 - Final Render Path
-- Compact camera list with text **Select** and **Render** buttons
+- Render This Profile and Apply Profile to Scene Output
+- Resolution presets
+- Render All Enabled Profiles and Validate Profiles
+- Collapsed Camera List
+- Collapsed Help and validation details
+
+### Camera Data Properties
+
+Open **Properties > Camera Data > Camera Output Profile** to edit all fields for the selected camera. The panel appears only when the active object is a camera.
+
+### Output Properties
+
+Open **Properties > Output > Camera Output Profiles Settings** for:
+
+- Base Output Folder
+- Default Output Subfolder for newly initialized profiles
+- Render window, folder opening, and restoration settings
+- Validation status
+- Markdown report setting
 
 ## Base Output Folder
 
@@ -42,6 +56,8 @@ Use:
 - **Open Base Output Folder** to open it in the operating system.
 
 The add-on treats this value as a folder, not a filename prefix.
+
+These controls are located in **Output Properties > Camera Output Profiles Settings**.
 
 ## Output Subfolder
 
@@ -62,6 +78,8 @@ C:\tmp\camera_profiles
 Leave the field empty to save directly into `C:\tmp`.
 
 Absolute subfolders and traversal such as `../` are rejected.
+
+The global **Default Output Subfolder** is copied only into newly initialized profiles. It does not overwrite existing per-camera values.
 
 ## Final Render Path
 
@@ -120,6 +138,8 @@ Rendering 3/3: Camera_Vertical 1080x1920
 ```
 
 The batch writes `CAMERA_OUTPUT_PROFILES_REPORT.md` to the Base Output Folder. It contains Blender version, scene, base folder, camera, resolution, format, full path, skipped profiles, warnings, and errors.
+
+Disable **Write Markdown Report** in Output Properties when a batch report is not needed.
 
 ## Apply Profile to Scene Output
 

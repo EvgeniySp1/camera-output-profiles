@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## v0.1.2 - unreleased
+
+- Reduced the visible N-panel to quick workflow controls
+- Moved full camera profile editing to Camera Data Properties
+- Moved global output and report settings to Output Properties
+- Added collapsed Camera List and Help panels
+- Made critical validation results visible while normal results stay collapsed
+- Added a default output subfolder setting for newly initialized profiles
+- Added a Markdown report enable/disable setting
+
 ## v0.1.1 - unreleased
 
 - Clarified profile vs Scene Output behavior

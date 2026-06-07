@@ -39,7 +39,7 @@ class AddonContractTests(unittest.TestCase):
         module = ast.parse((PACKAGE / "__init__.py").read_text(encoding="utf-8"))
         bl_info = assignment_value(module, "bl_info")
         self.assertEqual(bl_info["name"], "Camera Output Profiles")
-        self.assertEqual(bl_info["version"], (0, 1, 1))
+        self.assertEqual(bl_info["version"], (0, 1, 2))
         self.assertEqual(bl_info["blender"], (4, 2, 0))
         self.assertEqual(bl_info["category"], "Render")
         self.assertEqual(bl_info["location"], "View3D > Sidebar > Cam Output")
@@ -64,31 +64,48 @@ class AddonContractTests(unittest.TestCase):
             with self.subTest(operator_id=operator_id):
                 self.assertIn(f'"{operator_id}"', source)
 
-    def test_panel_location_matches_requirements(self):
+    def test_ui_panels_match_v012_architecture(self):
         source = (PACKAGE / "ui.py").read_text(encoding="utf-8")
         self.assertIn('bl_space_type = "VIEW_3D"', source)
         self.assertIn('bl_region_type = "UI"', source)
         self.assertIn('bl_category = "Cam Output"', source)
         self.assertIn('bl_label = "Camera Output Profiles"', source)
+        self.assertIn('bl_idname = "CAMERAOUTPUT_PT_camera_profile"', source)
+        self.assertIn('bl_space_type = "PROPERTIES"', source)
+        self.assertIn('bl_context = "data"', source)
+        self.assertIn('bl_label = "Camera Output Profile"', source)
+        self.assertIn('bl_idname = "CAMERAOUTPUT_PT_scene_settings"', source)
+        self.assertIn('bl_context = "output"', source)
+        self.assertIn('bl_label = "Camera Output Profiles Settings"', source)
+        self.assertIn('bl_idname = "CAMERAOUTPUT_PT_camera_list"', source)
+        self.assertIn('bl_label = "Camera List"', source)
+        self.assertIn('bl_idname = "CAMERAOUTPUT_PT_help"', source)
+        self.assertIn('bl_label = "Help"', source)
+        self.assertGreaterEqual(source.count('bl_options = {"DEFAULT_CLOSED"}'), 3)
         for label in (
-            "Camera Output Profiles v0.1.1",
-            "Camera profiles are separate from Blender",
-            "Base Output Folder",
-            "Choose Base Output Folder",
-            "Open Base Output Folder",
+            "Camera Output Profiles v0.1.2",
             "Render All Enabled Profiles",
-            "Selected Camera Profile:",
+            "Selected Camera:",
+            "Profile:",
             "Final Render Path",
             "Render This Profile",
             "Apply Profile to Scene Output",
-            "Open Final Output Folder",
             "Output Subfolder",
-            "Tokens: {camera}, {scene}, {width}, {height}, {frame}, {format}, {date}",
             "Select",
             "Render",
+            "Default Output Subfolder",
+            "Write Markdown Report",
         ):
             with self.subTest(label=label):
                 self.assertIn(label, source)
+        main_class = source.split("class CAMERAOUTPUT_PT_main", 1)[1].split(
+            "class CAMERAOUTPUT_PT_camera_list", 1
+        )[0]
+        self.assertNotIn(
+            "Camera profiles are separate from Blender",
+            main_class,
+        )
+        self.assertNotIn("Tokens: {camera}", main_class)
 
     def test_required_project_documentation_exists(self):
         required_files = {
@@ -97,6 +114,7 @@ class AddonContractTests(unittest.TestCase):
             ROOT / "CHANGELOG.md",
             ROOT / "RELEASE_NOTES_v0.1.0.md",
             ROOT / "DRAFT_RELEASE_NOTES_v0.1.1.md",
+            ROOT / "DRAFT_RELEASE_NOTES_v0.1.2.md",
             ROOT / "docs" / "USER_GUIDE.md",
             ROOT / "docs" / "TESTING.md",
             ROOT / "docs" / "ROADMAP.md",
@@ -153,6 +171,18 @@ class AddonContractTests(unittest.TestCase):
         self.assertIn("NOT RELEASED", draft_notes)
         self.assertIn("Blender 5.1.2", testing)
         self.assertIn("Preset changes profile only", testing)
+
+    def test_v012_documentation_is_unreleased(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        draft_notes = (ROOT / "DRAFT_RELEASE_NOTES_v0.1.2.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("v0.1.2", readme)
+        self.assertIn("v0.1.2", changelog)
+        self.assertIn("unreleased", changelog.lower())
+        self.assertIn("DRAFT", draft_notes)
+        self.assertIn("NOT RELEASED", draft_notes)
 
 
 if __name__ == "__main__":
