@@ -2,119 +2,154 @@
 
 Open-source Blender add-on for per-camera render resolution, aspect ratio, file naming, and output profiles.
 
-Blender stores render output settings at scene level. Camera Output Profiles adds a profile to each camera so one scene can produce widescreen, square, portrait, vertical, and custom still images without repeatedly editing global render settings.
+> Development version: v0.1.1, unreleased. Test locally before publishing.
+
+## How It Works
+
+Camera Output Profiles stores output settings per camera. Blender itself stores render resolution globally per scene, not per camera. Therefore presets update the selected camera profile, not Blender's global Output panel. When rendering through the add-on, the profile is applied temporarily. Use **Apply Profile to Scene Output** if you want Blender's Format panel to match the selected profile.
+
+This separation is intentional:
+
+- Presets edit only the selected camera profile.
+- Blender's native **Output > Format** remains unchanged.
+- Add-on rendering temporarily applies the profile.
+- Original Scene Output settings are restored by default.
+- Manual synchronization happens only through **Apply Profile to Scene Output**.
 
 ## Features
 
 - Per-camera width, height, format, color mode, quality, transparency, frame, subfolder, and filename template
 - PNG and JPEG output, plus WebP when supported by the installed Blender build
-- FHD, 4K, square, portrait, vertical, and thumbnail resolution presets
-- Validation for invalid profiles, tokens, frames, formats, and duplicate output filenames
-- One-click batch rendering for all enabled camera profiles
-- Automatic restoration of the original scene camera and render settings
-- Markdown render report written to `CAMERA_OUTPUT_PROFILES_REPORT.md`
-- Blender 4.2 LTS+ target, with Blender 5.x support where APIs remain compatible
+- FHD, 4K, square, portrait, vertical, and thumbnail presets
+- Full **Final Render Path** preview for the selected camera
+- Explicit **Render This Profile** and **Render All Enabled Profiles** actions
+- Optional Render Result window and automatic output-folder opening
+- Manual **Apply Profile to Scene Output** action
+- Validation for paths, frames, formats, templates, duplicate outputs, and overwrite risk
+- Automatic scene restoration through `try/finally`
+- Markdown batch report at `CAMERA_OUTPUT_PROFILES_REPORT.md`
 
 ## Installation
 
-1. Download the repository ZIP.
-2. In Blender, open **Edit -> Preferences -> Add-ons -> Install** (or **Install from Disk**).
-3. Select the ZIP containing the `camera_output_profiles` folder, or select the add-on folder.
-4. Enable **Camera Output Profiles**.
+1. Download or archive the local project.
+2. Ensure the ZIP contains `camera_output_profiles/` at its root.
+3. Open Blender.
+4. Go to **Edit -> Preferences -> Add-ons -> Install from Disk**.
+5. Select the ZIP.
+6. Enable **Camera Output Profiles**.
 
-For a release ZIP, the archive should contain the `camera_output_profiles/` package at its root.
+For local testing, reinstall the ZIP after code changes or temporarily add the repository package to Blender's scripts/add-ons directory.
 
 ## Quick Start
 
-1. Open a scene with multiple cameras.
-2. Open the 3D Viewport N-panel and select **Cam Output**.
-3. Click **Add Profiles for All Cameras**.
-4. Select a camera and apply a resolution preset, or enter a custom size.
-5. Set the scene render output path.
-6. Click **Render Enabled Profiles**.
+1. Select a camera.
+2. Open **N-panel > Cam Output**.
+3. Click **Add / Refresh Camera Profiles**.
+4. Choose a preset, for example **4K 16:9**.
+5. Check **Final Render Path**.
+6. Click **Render This Profile**.
+7. Find the output in the shown folder.
 
-The add-on treats `Scene > Output > Output Path` as the base output folder. Each profile adds its sanitized subfolder, filename, and image extension.
+The 4K preset changes the selected camera profile to 3840 x 2160. Blender's native Scene Output may remain 1920 x 1080 until **Apply Profile to Scene Output** is clicked.
 
-## Filename Tokens
+## Output Paths
 
-| Token | Value |
-| --- | --- |
-| `{camera}` | Camera object name |
-| `{width}` | Profile width |
-| `{height}` | Profile height |
-| `{frame}` | Rendered frame |
-| `{format}` | Lowercase file format |
-| `{date}` | Current date as `YYYY-MM-DD` |
-| `{scene}` | Scene name |
+The final path combines:
+
+1. **Base Output Folder** from `scene.render.filepath`
+2. Optional per-camera **Output Subfolder**
+3. Expanded **Filename Template**
+4. Image format extension
 
 Example:
 
 ```text
-{scene}_{camera}_{width}x{height}_{frame:04d}_{format}
+C:\tmp\camera_profiles\Camera_3840x2160_0001.png
 ```
 
-Invalid filesystem characters and path separators are replaced. Empty names receive a safe fallback, repeated whitespace is collapsed, and `.` / `..` traversal segments are removed from subfolders.
+Leave **Output Subfolder** empty to save directly into the Base Output Folder.
+
+## Filename Tokens
+
+Default template:
+
+```text
+{camera}_{width}x{height}_{frame}
+```
+
+Supported tokens:
+
+| Token | Value |
+| --- | --- |
+| `{camera}` | Camera object name |
+| `{scene}` | Scene name |
+| `{width}` | Profile width |
+| `{height}` | Profile height |
+| `{frame}` | Rendered frame |
+| `{format}` | Lowercase image format |
+| `{date}` | Current date as `YYYY-MM-DD` |
+
+Invalid filesystem characters are sanitized. Path separators and traversal such as `../` are rejected.
+
+## Render Behavior
+
+- **Show Render Window**: shows Blender's Render Result after a single render, or after batch completion, when Blender runs with a UI.
+- **Open Output Folder After Render**: opens the relevant output folder after success.
+- **Restore Scene Output After Render**: restores the original resolution, format, quality, transparency, camera, frame, and output path. When disabled, profile format settings remain applied while the original camera, frame, and Base Output Folder are preserved.
 
 ## Validation
 
-Validation reports Critical, Warning, and Info messages in the panel. Critical errors block batch rendering; warnings do not.
+Critical errors block rendering:
 
-Checks include:
+- Missing cameras or invalid Base Output Folder
+- Invalid dimensions
+- Empty or malformed filename template
+- Unsupported filename token
+- Path traversal
+- Unsupported image format
+- Duplicate final output paths
+- Custom frame outside the scene range
 
-- Missing cameras or output path
-- Invalid width or height
-- Empty or malformed filename templates
-- Unsupported tokens and image formats
-- Duplicate final output filenames
-- Invalid camera objects
-- Custom frames outside the scene frame range
+Warnings do not block rendering:
+
+- Scene Output differs from the selected profile
+- Empty Output Subfolder
+- Existing file may be overwritten
+- JPEG profile requests RGBA
 
 ## Limitations
 
-- v0.1.0 renders still images only.
-- Animation profile support is planned.
+- v0.1.1 still renders still images only.
+- Animation frame-range profiles are planned.
 - Render engine and sample overrides are planned.
-- WebP is available only when the current Blender build exposes `WEBP` as an image format.
-- Blender UI/render integration must be tested inside Blender; standard Python tests cannot execute `bpy`.
+- WebP depends on the installed Blender build.
+- v0.1.1 must be manually verified in Blender 5.1.2 before release.
 
-## Manual Test Checklist
+## Testing
 
-1. Create three cameras: `Camera_Front`, `Camera_Square`, and `Camera_Vertical`.
-2. Set `Camera_Front` to 1920x1080 PNG.
-3. Set `Camera_Square` to 2048x2048 PNG.
-4. Set `Camera_Vertical` to 1080x1920 JPEG.
-5. Enable all profiles and render them.
-6. Confirm all files use the expected names, dimensions, formats, and folders.
-7. Confirm the original scene camera, resolution, output path, image format, transparency setting, and current frame are restored.
-8. Give two profiles the same final filename and confirm validation blocks batch rendering.
-9. Empty one filename template and confirm validation reports a critical error.
-10. Confirm `CAMERA_OUTPUT_PROFILES_REPORT.md` lists outputs, skipped cameras, and warnings.
+Standard-library tests:
 
-## Screenshots
-
-Screenshots will be added after Blender 4.2/5.x UI verification. See `docs/screenshots/`.
-
-## Development Status
-
-Early open-source MVP. The code is organized by properties, UI, operators, validation, rendering, and pure utility helpers.
-
-Run the standard-library tests:
-
-```bash
+```powershell
 python -m unittest discover -s tests -v
 ```
 
-Run the end-to-end Blender test:
+Available Blender integration test:
 
-```bash
+```powershell
 blender --background --factory-startup --python tests/blender_integration_test.py
 ```
 
+The integration scene uses:
+
+- `Camera_Front`: 1920 x 1080 PNG
+- `Camera_Square`: 2048 x 2048 PNG
+- `Camera_Vertical`: 1080 x 1920 JPEG
+
+See [docs/TESTING.md](docs/TESTING.md) for the exact Blender 5.1.2 manual checklist.
+
 ## Contributing
 
-Issues and pull requests are welcome. Keep changes compatible with Blender 4.2 LTS+, avoid external runtime dependencies, and include reproducible Blender test steps for UI or render changes.
-
-See [User Guide](docs/USER_GUIDE.md), [Roadmap](docs/ROADMAP.md), and [Changelog](CHANGELOG.md).
+Issues and pull requests are welcome after local Blender verification. Keep runtime code limited to Python's standard library and Blender's `bpy` API.
 
 ## License
 

@@ -39,6 +39,9 @@ class SceneRenderSnapshot:
 class RenderedProfile:
     camera_name: str
     output_path: Path
+    width: int
+    height: int
+    file_format: str
 
 
 @dataclass(slots=True)
@@ -52,6 +55,7 @@ class BatchRenderResult:
     rendered: list[RenderedProfile] = field(default_factory=list)
     skipped: list[SkippedProfile] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     report_path: Path | None = None
 
 
@@ -142,6 +146,35 @@ def _restore_scene_settings(
     return errors
 
 
+def _restore_non_profile_settings(
+    scene: bpy.types.Scene,
+    snapshot: SceneRenderSnapshot,
+) -> list[str]:
+    """Restore camera, frame and base path while keeping profile format settings."""
+    render = scene.render
+    errors: list[str] = []
+    restore_steps = (
+        ("scene.camera", lambda: setattr(scene, "camera", snapshot.camera)),
+        ("filepath", lambda: setattr(render, "filepath", snapshot.filepath)),
+        ("frame", lambda: scene.frame_set(snapshot.frame_current)),
+    )
+    for label, restore in restore_steps:
+        try:
+            restore()
+        except Exception as exc:
+            errors.append(f"Could not restore {label}: {exc}")
+
+    if snapshot.use_file_extension is not None and hasattr(render, "use_file_extension"):
+        try:
+            render.use_file_extension = snapshot.use_file_extension
+        except Exception as exc:
+            errors.append(f"Could not restore use_file_extension: {exc}")
+
+    for error in errors:
+        print(f"[Camera Output Profiles] WARNING: {error}")
+    return errors
+
+
 def _apply_image_settings(scene: bpy.types.Scene, profile) -> None:
     render = scene.render
     image_settings = render.image_settings
@@ -160,15 +193,39 @@ def _apply_image_settings(scene: bpy.types.Scene, profile) -> None:
         image_settings.quality = int(profile.quality)
 
 
+def apply_profile_to_scene_output(scene: bpy.types.Scene, profile) -> None:
+    """Copy a camera profile into Blender's global Scene Output settings."""
+    scene.render.resolution_x = int(profile.width)
+    scene.render.resolution_y = int(profile.height)
+    scene.render.resolution_percentage = 100
+    _apply_image_settings(scene, profile)
+    if hasattr(scene.render, "film_transparent"):
+        scene.render.film_transparent = bool(profile.transparent_background)
+
+
+def show_render_result() -> bool:
+    """Show Blender's Render Result when running with a user interface."""
+    if getattr(bpy.app, "background", False):
+        return False
+    try:
+        result = bpy.ops.render.view_show("INVOKE_DEFAULT")
+        return "FINISHED" in result or "RUNNING_MODAL" in result
+    except Exception as exc:
+        print(f"[Camera Output Profiles] Could not show Render Result: {exc}")
+        return False
+
+
 def output_path_for_profile(
     scene: bpy.types.Scene,
     camera: bpy.types.Object,
     *,
     now: datetime | None = None,
+    base_path: Path | None = None,
 ) -> Path:
     profile = camera.camera_output_profile
     frame = int(scene.frame_current if profile.use_current_frame else profile.frame)
-    base_path = utils.resolve_output_base(scene.render.filepath, bpy.path.abspath)
+    if base_path is None:
+        base_path = utils.resolve_output_base(scene.render.filepath, bpy.path.abspath)
     values = utils.build_template_values(
         camera_name=camera.name,
         scene_name=scene.name,
@@ -192,14 +249,22 @@ def render_profile(
     camera: bpy.types.Object,
     *,
     now: datetime | None = None,
+    base_path: Path | None = None,
+    restore_scene_output: bool = True,
+    show_render_window: bool = False,
 ) -> Path:
-    """Render one still image and restore scene settings afterwards."""
+    """Render one still image and optionally restore scene settings afterwards."""
     if getattr(camera, "type", None) != "CAMERA" or camera.data is None:
         raise RenderProfileError(f"{camera.name} is not a valid camera.")
 
     profile = camera.camera_output_profile
     try:
-        output_path = output_path_for_profile(scene, camera, now=now)
+        output_path = output_path_for_profile(
+            scene,
+            camera,
+            now=now,
+            base_path=base_path,
+        )
         output_path.parent.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError, utils.TemplateError) as exc:
         raise RenderProfileError(
@@ -211,15 +276,10 @@ def render_profile(
 
     try:
         scene.camera = camera
-        scene.render.resolution_x = int(profile.width)
-        scene.render.resolution_y = int(profile.height)
-        scene.render.resolution_percentage = 100
+        apply_profile_to_scene_output(scene, profile)
         scene.render.filepath = str(output_path)
         if hasattr(scene.render, "use_file_extension"):
             scene.render.use_file_extension = False
-        _apply_image_settings(scene, profile)
-        if hasattr(scene.render, "film_transparent"):
-            scene.render.film_transparent = bool(profile.transparent_background)
         if not profile.use_current_frame:
             scene.frame_set(int(profile.frame))
 
@@ -229,7 +289,11 @@ def render_profile(
     except Exception as exc:
         render_error = exc
     finally:
-        restore_errors = _restore_scene_settings(scene, snapshot)
+        restore_errors = []
+        if render_error is not None or restore_scene_output:
+            restore_errors = _restore_scene_settings(scene, snapshot)
+        else:
+            restore_errors = _restore_non_profile_settings(scene, snapshot)
 
     if render_error is not None:
         raise RenderProfileError(f"Render failed for {camera.name}: {render_error}") from render_error
@@ -239,6 +303,8 @@ def render_profile(
         )
 
     print(f"[Camera Output Profiles] Rendered {camera.name}: {output_path}")
+    if show_render_window:
+        show_render_result()
     return output_path
 
 
@@ -260,6 +326,7 @@ def write_markdown_report(
         f"- Scene: `{_markdown_text(scene.name)}`",
         f"- Date/time: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`",
         f"- Blender version: `{bpy.app.version_string}`",
+        f"- Base output folder: `{base_path}`",
         f"- Rendered profiles: `{len(batch_result.rendered)}`",
         "",
         "## Output Files",
@@ -268,11 +335,13 @@ def write_markdown_report(
 
     if batch_result.rendered:
         for rendered in batch_result.rendered:
-            try:
-                display_path = rendered.output_path.relative_to(base_path)
-            except ValueError:
-                display_path = rendered.output_path
-            lines.append(f"- `{_markdown_text(rendered.camera_name)}`: `{display_path}`")
+            lines.append(
+                "- "
+                f"`{_markdown_text(rendered.camera_name)}` | "
+                f"{rendered.width} x {rendered.height} | "
+                f"{rendered.file_format} | "
+                f"`{rendered.output_path}`"
+            )
     else:
         lines.append("- None")
 
@@ -290,6 +359,13 @@ def write_markdown_report(
     if warnings:
         for warning in warnings:
             lines.append(f"- {_markdown_text(warning)}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Errors", ""])
+    if batch_result.errors:
+        for error in batch_result.errors:
+            lines.append(f"- {_markdown_text(error)}")
     else:
         lines.append("- None")
 

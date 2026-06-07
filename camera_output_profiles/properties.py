@@ -111,15 +111,18 @@ class CameraOutputProfile(PropertyGroup):
     )
 
     output_subfolder: StringProperty(
-        name="Subfolder",
-        description="Relative subfolder under the scene output path",
+        name="Output Subfolder",
+        description=(
+            "Optional folder inside the Base Output Folder. "
+            "Leave empty to save directly into the base folder"
+        ),
         default="camera_profiles",
     )
 
     filename_template: StringProperty(
-        name="Filename",
+        name="Filename Template",
         description="Filename template using tokens like {camera}, {width}, {height}, {frame}",
-        default="{camera}*{width}x{height}*{frame}",
+        default="{camera}_{width}x{height}_{frame}",
     )
 
     use_current_frame: BoolProperty(
@@ -173,10 +176,32 @@ def register_properties() -> None:
     bpy.types.Scene.camera_output_validation_warning_count = IntProperty(default=0)
     bpy.types.Scene.camera_output_validation_info_count = IntProperty(default=0)
     bpy.types.Scene.camera_output_validation_timestamp = StringProperty(default="")
+    bpy.types.Scene.camera_output_show_render_window = BoolProperty(
+        name="Show Render Window",
+        description="Show Blender's Render Result after rendering when possible",
+        default=True,
+    )
+    bpy.types.Scene.camera_output_open_folder_after_render = BoolProperty(
+        name="Open Output Folder After Render",
+        description="Open the output folder after a successful render",
+        default=False,
+    )
+    bpy.types.Scene.camera_output_restore_scene_output = BoolProperty(
+        name="Restore Scene Output After Render",
+        description=(
+            "When enabled, the add-on restores Blender's global Output settings "
+            "after rendering. Disable if you want the last rendered profile to "
+            "remain applied to Scene Output"
+        ),
+        default=True,
+    )
 
 
 def unregister_properties() -> None:
     for owner, attribute in (
+        (bpy.types.Scene, "camera_output_restore_scene_output"),
+        (bpy.types.Scene, "camera_output_open_folder_after_render"),
+        (bpy.types.Scene, "camera_output_show_render_window"),
         (bpy.types.Scene, "camera_output_validation_timestamp"),
         (bpy.types.Scene, "camera_output_validation_info_count"),
         (bpy.types.Scene, "camera_output_validation_warning_count"),

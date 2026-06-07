@@ -82,6 +82,14 @@ def main() -> None:
     camera_square = add_camera("Camera_Square", (5.0, -5.0, 5.0))
     camera_vertical = add_camera("Camera_Vertical", (4.5, -4.5, 3.5))
 
+    assert (
+        camera_front.camera_output_profile.filename_template
+        == "{camera}_{width}x{height}_{frame}"
+    )
+    assert scene.camera_output_show_render_window is True
+    assert scene.camera_output_open_folder_after_render is False
+    assert scene.camera_output_restore_scene_output is True
+
     configure_profile(
         camera_front,
         width=1920,
@@ -101,6 +109,30 @@ def main() -> None:
         file_format="JPEG",
     )
 
+    scene.camera = camera_front
+    camera_front.select_set(True)
+    bpy.context.view_layer.objects.active = camera_front
+    scene.render.resolution_x = 1920
+    scene.render.resolution_y = 1080
+    scene.render.resolution_percentage = 100
+    preset_result = bpy.ops.camera_output.apply_preset(preset="UHD_16_9")
+    assert preset_result == {"FINISHED"}, preset_result
+    assert camera_front.camera_output_profile.width == 3840
+    assert camera_front.camera_output_profile.height == 2160
+    assert scene.render.resolution_x == 1920
+    assert scene.render.resolution_y == 1080
+
+    apply_result = bpy.ops.camera_output.apply_profile_to_scene(
+        camera_name=camera_front.name
+    )
+    assert apply_result == {"FINISHED"}, apply_result
+    assert scene.render.resolution_x == 3840
+    assert scene.render.resolution_y == 2160
+    assert scene.render.resolution_percentage == 100
+
+    camera_front.camera_output_profile.width = 1920
+    camera_front.camera_output_profile.height = 1080
+
     with tempfile.TemporaryDirectory(prefix="camera-output-profiles-") as temp_dir:
         scene.render.filepath = temp_dir
         scene.camera = camera_front
@@ -114,6 +146,12 @@ def main() -> None:
         scene.frame_set(5)
 
         original = render_manager.capture_scene_settings(scene)
+        front_preview = render_manager.output_path_for_profile(scene, camera_front)
+        assert front_preview == (
+            Path(temp_dir)
+            / "camera_profiles"
+            / "Camera_Front_1920x1080_5.png"
+        )
         operator_result = bpy.ops.camera_output.render_enabled()
         assert operator_result == {"FINISHED"}, operator_result
 
@@ -138,6 +176,10 @@ def main() -> None:
         assert "Camera_Front" in report_text
         assert "Camera_Square" in report_text
         assert "Camera_Vertical" in report_text
+        assert "1920 x 1080" in report_text
+        assert "2048 x 2048" in report_text
+        assert "1080 x 1920" in report_text
+        assert str(Path(temp_dir)) in report_text
 
         restored = render_manager.capture_scene_settings(scene)
         assert restored == original, (original, restored)
@@ -158,6 +200,14 @@ def main() -> None:
             item.camera_name == "Camera_Square"
             and "Filename template is empty" in item.message
             for item in empty_result.messages
+        )
+
+        camera_square.camera_output_profile.filename_template = "../{camera}"
+        traversal_result = validation.validate_scene(scene)
+        assert traversal_result.has_critical
+        assert any(
+            "path separators or path traversal" in item.message
+            for item in traversal_result.messages
         )
 
     camera_output_profiles.unregister()

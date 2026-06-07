@@ -53,6 +53,26 @@ class UtilsTests(unittest.TestCase):
         with self.assertRaises(self.utils.TemplateError):
             self.utils.extract_template_tokens("{camera")
 
+    def test_template_rejects_path_traversal(self):
+        with self.assertRaises(self.utils.TemplateError):
+            self.utils.extract_template_tokens("../{camera}")
+
+    def test_template_rejects_path_separators(self):
+        for template in ("folder/{camera}", r"folder\{camera}"):
+            with self.subTest(template=template):
+                with self.assertRaises(self.utils.TemplateError):
+                    self.utils.extract_template_tokens(template)
+
+    def test_subfolder_validation_rejects_absolute_and_traversal_paths(self):
+        invalid_paths = ("../renders", "renders/../social", "C:/renders", "/renders")
+        for subfolder in invalid_paths:
+            with self.subTest(subfolder=subfolder):
+                with self.assertRaises(ValueError):
+                    self.utils.validate_output_subfolder(subfolder)
+
+    def test_empty_subfolder_is_valid(self):
+        self.assertEqual(self.utils.validate_output_subfolder(""), Path())
+
     def test_template_supports_all_documented_tokens(self):
         values = {
             "camera": "Camera Front",
@@ -90,7 +110,7 @@ class UtilsTests(unittest.TestCase):
     def test_build_output_path_uses_sanitized_template_and_extension(self):
         result = self.utils.build_output_path(
             Path("C:/renders"),
-            "../camera_profiles",
+            "camera_profiles",
             "{camera}*{width}x{height}*{frame}",
             {
                 "camera": "Front/Camera",

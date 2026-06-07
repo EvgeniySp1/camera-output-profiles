@@ -39,7 +39,7 @@ class AddonContractTests(unittest.TestCase):
         module = ast.parse((PACKAGE / "__init__.py").read_text(encoding="utf-8"))
         bl_info = assignment_value(module, "bl_info")
         self.assertEqual(bl_info["name"], "Camera Output Profiles")
-        self.assertEqual(bl_info["version"], (0, 1, 0))
+        self.assertEqual(bl_info["version"], (0, 1, 1))
         self.assertEqual(bl_info["blender"], (4, 2, 0))
         self.assertEqual(bl_info["category"], "Render")
         self.assertEqual(bl_info["location"], "View3D > Sidebar > Cam Output")
@@ -56,6 +56,9 @@ class AddonContractTests(unittest.TestCase):
             "camera_output.apply_preset",
             "camera_output.select_camera",
             "camera_output.open_output_folder",
+            "camera_output.choose_base_output_folder",
+            "camera_output.open_final_output_folder",
+            "camera_output.apply_profile_to_scene",
         }
         for operator_id in required_ids:
             with self.subTest(operator_id=operator_id):
@@ -67,6 +70,25 @@ class AddonContractTests(unittest.TestCase):
         self.assertIn('bl_region_type = "UI"', source)
         self.assertIn('bl_category = "Cam Output"', source)
         self.assertIn('bl_label = "Camera Output Profiles"', source)
+        for label in (
+            "Camera Output Profiles v0.1.1",
+            "Camera profiles are separate from Blender",
+            "Base Output Folder",
+            "Choose Base Output Folder",
+            "Open Base Output Folder",
+            "Render All Enabled Profiles",
+            "Selected Camera Profile:",
+            "Final Render Path",
+            "Render This Profile",
+            "Apply Profile to Scene Output",
+            "Open Final Output Folder",
+            "Output Subfolder",
+            "Tokens: {camera}, {scene}, {width}, {height}, {frame}, {format}, {date}",
+            "Select",
+            "Render",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(label, source)
 
     def test_required_project_documentation_exists(self):
         required_files = {
@@ -74,7 +96,9 @@ class AddonContractTests(unittest.TestCase):
             ROOT / "LICENSE",
             ROOT / "CHANGELOG.md",
             ROOT / "RELEASE_NOTES_v0.1.0.md",
+            ROOT / "DRAFT_RELEASE_NOTES_v0.1.1.md",
             ROOT / "docs" / "USER_GUIDE.md",
+            ROOT / "docs" / "TESTING.md",
             ROOT / "docs" / "ROADMAP.md",
             ROOT / "docs" / "screenshots" / ".gitkeep",
             ROOT / "examples" / ".gitkeep",
@@ -101,6 +125,8 @@ class AddonContractTests(unittest.TestCase):
         self.assertIn("Camera_Front", readme)
         self.assertIn("Camera_Square", readme)
         self.assertIn("Camera_Vertical", readme)
+        self.assertIn("Apply Profile to Scene Output", readme)
+        self.assertIn("Final Render Path", readme)
 
     def test_release_documents_match_version(self):
         license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
@@ -114,6 +140,19 @@ class AddonContractTests(unittest.TestCase):
         self.assertIn("# Camera Output Profiles v0.1.0", release_notes)
         for version in ("v0.2.0", "v0.3.0", "v1.0.0"):
             self.assertIn(version, roadmap)
+
+    def test_v011_documentation_is_unreleased(self):
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        draft_notes = (ROOT / "DRAFT_RELEASE_NOTES_v0.1.1.md").read_text(
+            encoding="utf-8"
+        )
+        testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
+        self.assertIn("v0.1.1", changelog)
+        self.assertIn("unreleased", changelog.lower())
+        self.assertIn("DRAFT", draft_notes)
+        self.assertIn("NOT RELEASED", draft_notes)
+        self.assertIn("Blender 5.1.2", testing)
+        self.assertIn("Preset changes profile only", testing)
 
 
 if __name__ == "__main__":

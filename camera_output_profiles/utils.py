@@ -23,6 +23,7 @@ FILE_EXTENSIONS = {
 
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WHITESPACE = re.compile(r"\s+")
+_WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
 
 
 class TemplateError(ValueError):
@@ -50,10 +51,28 @@ def sanitize_subfolder(value: str) -> Path:
     return Path(*parts) if parts else Path()
 
 
+def validate_output_subfolder(value: str) -> Path:
+    """Validate a relative output subfolder and return its sanitized path."""
+    normalized = value.strip().replace("\\", "/")
+    if not normalized:
+        return Path()
+    if normalized.startswith("/") or _WINDOWS_DRIVE.match(normalized):
+        raise ValueError("Output subfolder must be relative to the Base Output Folder.")
+
+    parts = normalized.split("/")
+    if any(part == ".." for part in parts):
+        raise ValueError("Output subfolder cannot contain path traversal ('..').")
+    return sanitize_subfolder(value)
+
+
 def extract_template_tokens(template: str) -> set[str]:
     """Parse and validate template fields."""
     if not template.strip():
         raise TemplateError("Filename template is empty.")
+    if "/" in template or "\\" in template or ".." in template:
+        raise TemplateError(
+            "Filename template cannot contain path separators or path traversal."
+        )
 
     tokens: set[str] = set()
     try:
@@ -120,7 +139,8 @@ def build_output_path(
 ) -> Path:
     filename = render_filename_template(filename_template, template_values)
     extension = extension_for_format(file_format)
-    return base_path / sanitize_subfolder(output_subfolder) / f"{filename}{extension}"
+    subfolder = validate_output_subfolder(output_subfolder)
+    return base_path / subfolder / f"{filename}{extension}"
 
 
 def resolve_output_base(
@@ -133,7 +153,10 @@ def resolve_output_base(
     resolved = abspath(render_filepath)
     if not resolved.strip():
         raise ValueError("Scene output path could not be resolved.")
-    return Path(os.path.abspath(os.path.expanduser(resolved)))
+    base_path = Path(os.path.abspath(os.path.expanduser(resolved)))
+    if base_path.exists() and not base_path.is_dir():
+        raise ValueError("Base Output Folder points to a file, not a folder.")
+    return base_path
 
 
 def aspect_ratio_label(width: int, height: int) -> str:

@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Camera Output Profiles",
     "author": "Open-source contributors",
-    "version": (0, 1, 0),
+    "version": (0, 1, 1),
     "blender": (4, 2, 0),
     "location": "View3D > Sidebar > Cam Output",
     "description": "Per-camera render resolution, aspect ratio, file naming and output profiles",

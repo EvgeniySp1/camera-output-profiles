@@ -111,6 +111,13 @@ class BlenderImportSmokeTests(unittest.TestCase):
         self.assertTrue(
             hasattr(self.bpy.types.Scene, "camera_output_validation_results")
         )
+        self.assertTrue(hasattr(self.bpy.types.Scene, "camera_output_show_render_window"))
+        self.assertTrue(
+            hasattr(self.bpy.types.Scene, "camera_output_open_folder_after_render")
+        )
+        self.assertTrue(
+            hasattr(self.bpy.types.Scene, "camera_output_restore_scene_output")
+        )
         self.addon.unregister()
         self.assertFalse(hasattr(self.bpy.types.Object, "camera_output_profile"))
 
@@ -196,6 +203,94 @@ class BlenderImportSmokeTests(unittest.TestCase):
             any("Duplicate output filename" in item.message for item in result.messages)
         )
 
+    def test_validation_reports_frame_scene_output_subfolder_and_overwrite(self):
+        class ObjectCollection(list):
+            def get(self, name):
+                return next((item for item in self if item.name == name), None)
+
+        class ValidationCollection(list):
+            def add(self):
+                item = types.SimpleNamespace(
+                    severity="INFO",
+                    message="",
+                    camera_name="",
+                )
+                self.append(item)
+                return item
+
+        profile = types.SimpleNamespace(
+            enabled=True,
+            width=3840,
+            height=2160,
+            filename_template="{camera}_{frame}",
+            file_format="PNG",
+            color_mode="RGBA",
+            use_current_frame=False,
+            frame=300,
+            output_subfolder="",
+        )
+        camera = types.SimpleNamespace(
+            name="Camera_4K",
+            type="CAMERA",
+            data=object(),
+            camera_output_profile=profile,
+        )
+        cameras = ObjectCollection([camera])
+        enum_items = [types.SimpleNamespace(identifier="PNG")]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "Camera_4K_300.png"
+            output_path.write_text("existing", encoding="utf-8")
+            scene = types.SimpleNamespace(
+                name="Scene",
+                camera=camera,
+                objects=cameras,
+                frame_current=1,
+                frame_start=1,
+                frame_end=250,
+                render=types.SimpleNamespace(
+                    filepath=temp_dir,
+                    resolution_x=1920,
+                    resolution_y=1080,
+                    resolution_percentage=100,
+                    image_settings=types.SimpleNamespace(
+                        file_format="PNG",
+                        bl_rna=types.SimpleNamespace(
+                            properties={
+                                "file_format": types.SimpleNamespace(
+                                    enum_items=enum_items
+                                )
+                            }
+                        ),
+                    ),
+                ),
+                camera_output_validation_results=ValidationCollection(),
+                camera_output_validation_summary="",
+                camera_output_validation_critical_count=0,
+                camera_output_validation_warning_count=0,
+                camera_output_validation_info_count=0,
+                camera_output_validation_timestamp="",
+            )
+            result = self.addon.validation.validate_scene(
+                scene,
+                selected_camera=camera,
+            )
+
+        messages = [(item.severity, item.message) for item in result.messages]
+        self.assertTrue(
+            any(
+                severity == "CRITICAL" and "outside scene range" in message
+                for severity, message in messages
+            )
+        )
+        self.assertTrue(
+            any("Output subfolder is empty" in message for _, message in messages)
+        )
+        self.assertTrue(
+            any("Scene Output differs" in message for _, message in messages)
+        )
+        self.assertTrue(any("already exists" in message for _, message in messages))
+
     def test_render_profile_restores_scene_settings(self):
         image_settings = types.SimpleNamespace(
             file_format="PNG",
@@ -268,6 +363,103 @@ class BlenderImportSmokeTests(unittest.TestCase):
         self.assertEqual(image_settings.quality, 75)
         self.assertFalse(render.film_transparent)
         self.assertEqual(scene.frame_current, 3)
+
+    def test_apply_profile_to_scene_output(self):
+        image_settings = types.SimpleNamespace(
+            file_format="PNG",
+            color_mode="RGB",
+            quality=75,
+        )
+        scene = types.SimpleNamespace(
+            render=types.SimpleNamespace(
+                resolution_x=640,
+                resolution_y=480,
+                resolution_percentage=50,
+                image_settings=image_settings,
+                film_transparent=False,
+            )
+        )
+        profile = types.SimpleNamespace(
+            width=3840,
+            height=2160,
+            file_format="JPEG",
+            color_mode="RGBA",
+            quality=91,
+            transparent_background=True,
+        )
+
+        self.addon.render_manager.apply_profile_to_scene_output(scene, profile)
+
+        self.assertEqual(scene.render.resolution_x, 3840)
+        self.assertEqual(scene.render.resolution_y, 2160)
+        self.assertEqual(scene.render.resolution_percentage, 100)
+        self.assertEqual(image_settings.file_format, "JPEG")
+        self.assertEqual(image_settings.color_mode, "RGB")
+        self.assertEqual(image_settings.quality, 91)
+        self.assertTrue(scene.render.film_transparent)
+
+    def test_render_profile_can_keep_applied_scene_output(self):
+        image_settings = types.SimpleNamespace(
+            file_format="PNG",
+            color_mode="RGB",
+            quality=75,
+        )
+        render = types.SimpleNamespace(
+            resolution_x=640,
+            resolution_y=480,
+            resolution_percentage=50,
+            filepath="//original",
+            use_file_extension=True,
+            image_settings=image_settings,
+            film_transparent=False,
+        )
+        profile = types.SimpleNamespace(
+            enabled=True,
+            width=3840,
+            height=2160,
+            file_format="PNG",
+            color_mode="RGBA",
+            quality=90,
+            transparent_background=True,
+            output_subfolder="camera_profiles",
+            filename_template="{camera}_{width}x{height}_{frame}",
+            use_current_frame=True,
+            frame=1,
+        )
+        camera = types.SimpleNamespace(
+            name="Camera_4K",
+            type="CAMERA",
+            data=object(),
+            camera_output_profile=profile,
+        )
+        scene = types.SimpleNamespace(
+            name="Scene",
+            camera=None,
+            render=render,
+            frame_current=1,
+        )
+        scene.frame_set = lambda value: setattr(scene, "frame_current", value)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            render.filepath = temp_dir
+            original_filepath = render.filepath
+            self.bpy.path.abspath = lambda value: value
+            self.bpy.ops.render = types.SimpleNamespace(
+                render=lambda **kwargs: {"FINISHED"}
+            )
+            self.addon.render_manager.render_profile(
+                scene,
+                camera,
+                restore_scene_output=False,
+            )
+
+        self.assertIsNone(scene.camera)
+        self.assertEqual(render.filepath, original_filepath)
+        self.assertTrue(render.use_file_extension)
+        self.assertEqual(render.resolution_x, 3840)
+        self.assertEqual(render.resolution_y, 2160)
+        self.assertEqual(render.resolution_percentage, 100)
+        self.assertEqual(image_settings.file_format, "PNG")
 
 
 if __name__ == "__main__":

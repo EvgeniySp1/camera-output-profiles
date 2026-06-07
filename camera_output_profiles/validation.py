@@ -94,6 +94,25 @@ def _frame_for_profile(scene: bpy.types.Scene, profile) -> int:
     return int(scene.frame_current if profile.use_current_frame else profile.frame)
 
 
+def _nearest_existing_parent(path: Path) -> Path:
+    candidate = path
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return candidate
+
+
+def _scene_output_differs(scene: bpy.types.Scene, profile) -> bool:
+    image_settings = scene.render.image_settings
+    return any(
+        (
+            scene.render.resolution_x != profile.width,
+            scene.render.resolution_y != profile.height,
+            scene.render.resolution_percentage != 100,
+            image_settings.file_format != profile.file_format,
+        )
+    )
+
+
 def _validate_camera_object(
     result: ValidationResult,
     camera: bpy.types.Object | None,
@@ -138,6 +157,7 @@ def validate_scene(
     include_disabled: bool = False,
     store: bool = True,
     now: datetime | None = None,
+    selected_camera: bpy.types.Object | None = None,
 ) -> ValidationResult:
     """Validate camera output profiles for the scene."""
     result = ValidationResult()
@@ -150,6 +170,19 @@ def validate_scene(
     base_path: Path | None = None
     try:
         base_path = utils.resolve_output_base(scene.render.filepath, bpy.path.abspath)
+        try:
+            base_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            result.add(
+                SEVERITY_CRITICAL,
+                f"Invalid Base Output Folder: {exc}",
+            )
+        writable_parent = _nearest_existing_parent(base_path)
+        if writable_parent.exists() and not os.access(writable_parent, os.W_OK):
+            result.add(
+                SEVERITY_CRITICAL,
+                f"Base Output Folder is not writable: {base_path}",
+            )
     except ValueError as exc:
         result.add(SEVERITY_CRITICAL, str(exc))
 
@@ -187,6 +220,19 @@ def validate_scene(
             result.add(SEVERITY_CRITICAL, str(exc), camera.name)
             continue
 
+        try:
+            utils.validate_output_subfolder(profile.output_subfolder)
+        except ValueError as exc:
+            result.add(SEVERITY_CRITICAL, str(exc), camera.name)
+            continue
+
+        if not profile.output_subfolder.strip():
+            result.add(
+                SEVERITY_WARNING,
+                "Output subfolder is empty; files will be saved in the Base Output Folder.",
+                camera.name,
+            )
+
         if profile.file_format not in utils.FILE_EXTENSIONS:
             result.add(
                 SEVERITY_CRITICAL,
@@ -207,7 +253,7 @@ def validate_scene(
         if not profile.use_current_frame:
             if frame < scene.frame_start or frame > scene.frame_end:
                 result.add(
-                    SEVERITY_WARNING,
+                    SEVERITY_CRITICAL,
                     (
                         f"Frame {frame} is outside scene range "
                         f"{scene.frame_start}-{scene.frame_end}."
@@ -247,6 +293,12 @@ def validate_scene(
             continue
 
         result.output_paths[camera.name] = output_path
+        if output_path.exists():
+            result.add(
+                SEVERITY_WARNING,
+                f"Output file already exists and may be overwritten: {output_path}",
+                camera.name,
+            )
         duplicate_key = _normalize_duplicate_key(output_path)
         if duplicate_key in output_keys:
             first_camera, first_path = output_keys[duplicate_key]
@@ -258,10 +310,33 @@ def validate_scene(
         else:
             output_keys[duplicate_key] = (camera.name, output_path)
 
+        if selected_camera is camera:
+            result.add(SEVERITY_INFO, f"Final output path: {output_path}", camera.name)
+
+    if (
+        selected_camera is not None
+        and getattr(selected_camera, "type", None) == "CAMERA"
+        and getattr(selected_camera, "data", None) is not None
+        and _scene_output_differs(scene, selected_camera.camera_output_profile)
+    ):
+        result.add(
+            SEVERITY_WARNING,
+            (
+                "Scene Output differs from selected profile. This is normal unless "
+                "you want Blender's Format panel to match. Use Apply Profile to "
+                "Scene Output."
+            ),
+            selected_camera.name,
+        )
+
     if cameras is None and all_scene_cameras and enabled_count == 0:
         result.add(SEVERITY_WARNING, "No enabled camera profiles found.")
 
-    if not result.messages:
+    if (
+        all_scene_cameras
+        and not result.has_critical
+        and (enabled_count > 0 or cameras is not None)
+    ):
         result.add(SEVERITY_INFO, "All enabled camera profiles are valid.")
 
     if store:

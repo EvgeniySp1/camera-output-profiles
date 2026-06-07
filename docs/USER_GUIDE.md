@@ -2,108 +2,180 @@
 
 ## Installation
 
-1. Download the repository or release ZIP.
-2. Open Blender 4.2 LTS or newer.
-3. Open **Edit -> Preferences -> Add-ons**.
-4. Choose **Install** or **Install from Disk**.
-5. Select the ZIP containing the `camera_output_profiles` folder.
-6. Enable **Camera Output Profiles**.
+1. Create a ZIP with `camera_output_profiles/` at the archive root.
+2. Open Blender **Edit -> Preferences -> Add-ons**.
+3. Choose **Install from Disk**.
+4. Select the ZIP and enable **Camera Output Profiles**.
+5. Open **3D Viewport -> N-panel -> Cam Output**.
+
+## Camera Profiles and Scene Output
+
+Blender stores render output settings globally on the scene. Camera Output Profiles stores separate settings on each camera.
+
+Selecting **4K 16:9** changes the selected camera profile to 3840 x 2160. Blender's native **Output > Format** may still show 1920 x 1080. This is expected.
+
+When the add-on renders, it temporarily applies the selected profile. By default it restores the original Scene Output after rendering.
+
+Use **Apply Profile to Scene Output** when you explicitly want Blender's Format panel to match the selected profile.
 
 ## Interface Overview
 
-Open the 3D Viewport sidebar with `N`, then choose the **Cam Output** tab.
+The panel shows:
 
-The main panel contains:
-
-- Current scene output folder preview
-- Last validation status
+- Add-on version, camera count, and enabled profile count
+- Explanation of profile-vs-scene behavior
+- Base Output Folder and current Scene Output
 - Global profile controls
-- Common resolution presets for the active or selected camera
-- One compact card per scene camera
-- Collapsible validation results
+- Render behavior controls
+- Presets for the selected camera
+- Full selected-camera profile editor
+- Final Render Path
+- Compact camera list with text **Select** and **Render** buttons
 
-Each camera card includes enable state, select/render buttons, resolution, aspect label, image format, color mode, quality where relevant, filename template, subfolder, transparency, and frame controls.
+## Base Output Folder
 
-## Profile Setup
+The **Base Output Folder** is `scene.render.filepath`.
 
-1. Set `Scene > Output > Output Path` to a writable folder.
-2. Click **Add Profiles for All Cameras**.
-3. Select a camera.
-4. Apply a preset or enter width and height manually.
-5. Choose PNG, JPEG, or WebP when supported.
-6. Set RGB/RGBA, quality, transparency, subfolder, and filename.
-7. Leave **Current Frame** enabled or enter a specific still frame.
+Use:
 
-New profiles default to:
+- **Choose Base Output Folder** to select it through Blender's file browser.
+- **Open Base Output Folder** to open it in the operating system.
 
-- 1920x1080
-- PNG / RGBA
-- Quality 90
-- Opaque background
-- `camera_profiles` subfolder
-- `{camera}*{width}x{height}*{frame}` filename template
+The add-on treats this value as a folder, not a filename prefix.
 
-The asterisks in the default template are sanitized to underscores on disk.
+## Output Subfolder
+
+Each camera has an optional **Output Subfolder**.
+
+Default:
+
+```text
+camera_profiles
+```
+
+For a Base Output Folder of `C:\tmp`, the default subfolder produces:
+
+```text
+C:\tmp\camera_profiles
+```
+
+Leave the field empty to save directly into `C:\tmp`.
+
+Absolute subfolders and traversal such as `../` are rejected.
+
+## Final Render Path
+
+The selected camera section always calculates and displays the complete **Final Render Path**.
+
+It updates when camera, dimensions, format, template, subfolder, or frame changes.
+
+Example:
+
+```text
+C:\tmp\camera_profiles\Camera_3840x2160_0001.png
+```
+
+Check this path before rendering.
 
 ## Filename Templates
 
-Supported tokens:
+Default:
+
+```text
+{camera}_{width}x{height}_{frame}
+```
+
+Tokens:
 
 - `{camera}`
+- `{scene}`
 - `{width}`
 - `{height}`
 - `{frame}`
 - `{format}`
 - `{date}`
-- `{scene}`
 
-Python-style format specifications are supported for valid tokens. For example, `{frame:04d}` produces `0001`.
+Python format specifications are supported, for example `{frame:04d}`.
 
-Filenames are sanitized before rendering. Invalid filesystem characters become underscores, repeated whitespace is collapsed, and empty names use `camera_output`. Subfolder traversal segments such as `..` are removed.
+Invalid filename characters are sanitized. Path separators, traversal, malformed braces, and unsupported tokens are critical validation errors.
 
-## Rendering All Profiles
+## Render This Profile
 
-1. Click **Validate Profiles**.
-2. Resolve every Critical message.
-3. Leave warnings when they are acceptable.
-4. Click **Render Enabled Profiles**.
+**Render This Profile** renders only the selected camera.
 
-The add-on renders enabled profiles sequentially. For every profile it temporarily changes the scene camera and output settings, renders one still, and restores the original settings.
+Before rendering, Blender reports the camera, resolution, and full path. After rendering, it reports the saved file.
 
-After the batch, `CAMERA_OUTPUT_PROFILES_REPORT.md` is written to the scene output folder.
+If **Show Render Window** is enabled, Blender opens the Render Result where the UI context allows it.
 
-## Avoiding Duplicate Filenames
+## Render All Enabled Profiles
 
-Use `{camera}` in the template when multiple profiles share a subfolder. Resolution, frame, date, or format tokens can further distinguish outputs.
+**Render All Enabled Profiles** validates and renders enabled cameras in sequence.
 
-Validation compares complete sanitized output paths, including extension. Duplicate final paths are Critical because a later render would overwrite an earlier file.
+Progress is reported for each camera:
+
+```text
+Rendering 1/3: Camera_FHD 1920x1080
+Rendering 2/3: Camera_4K 3840x2160
+Rendering 3/3: Camera_Vertical 1080x1920
+```
+
+The batch writes `CAMERA_OUTPUT_PROFILES_REPORT.md` to the Base Output Folder. It contains Blender version, scene, base folder, camera, resolution, format, full path, skipped profiles, warnings, and errors.
+
+## Apply Profile to Scene Output
+
+This manual action copies the selected profile into Blender's native Scene Output:
+
+- Resolution X/Y
+- Resolution percentage 100%
+- File format
+- Color mode where supported
+- JPEG/WebP quality where supported
+- Film transparency where supported
+
+Presets never perform this synchronization automatically.
+
+## Render Behavior
+
+### Show Render Window
+
+Default: enabled.
+
+Shows Blender's Render Result after rendering where possible. Background/headless Blender cannot open a render window, so progress remains available in reports and console output.
+
+### Open Output Folder After Render
+
+Default: disabled.
+
+Opens the final folder after a successful single render, or the Base Output Folder after a batch.
+
+### Restore Scene Output After Render
+
+Default: enabled.
+
+Restores the original Scene Output settings after rendering.
+
+When disabled, the last profile's resolution and format settings remain applied. The original camera, frame, Base Output Folder, and file-extension behavior are still restored.
+
+## Validation
+
+Critical messages block rendering. Warnings explain non-blocking conditions such as Scene Output differing from the profile, an empty subfolder, or overwrite risk.
+
+Scene Output differing from the selected profile is normal. Use **Apply Profile to Scene Output** only when the Format panel must match.
 
 ## Troubleshooting
 
-### Output path is empty
+### Render saved under `C:\tmp\camera_profiles`
 
-Set `Scene > Output > Output Path` before validation or rendering.
+`C:\tmp` is the Base Output Folder and `camera_profiles` is the profile's Output Subfolder. Both are visible in the panel, along with the complete Final Render Path.
 
-### WebP is rejected
+### 4K profile still shows FullHD in Output Properties
 
-The installed Blender build does not expose WebP output. Select PNG or JPEG.
+Presets edit the camera profile only. Click **Apply Profile to Scene Output** to copy 3840 x 2160 into Blender's Format panel.
 
-### JPEG transparency is missing
+### Render feels silent
 
-JPEG has no alpha channel. The add-on renders JPEG profiles as RGB and reports a warning.
+Enable **Show Render Window** and watch Blender's status/report area. Batch progress also prints to the system console.
 
-### A custom frame reports a warning
+### File already exists
 
-The frame is outside the scene start/end range. Rendering is still allowed, but confirm that the frame is intentional.
-
-### The output folder does not open
-
-Use Blender's Output Properties to inspect the configured path. The add-on first uses Blender's cross-platform path opener and then a standard system fallback.
-
-### Rendering fails
-
-Open Blender's system console and review messages prefixed with `[Camera Output Profiles]`. Confirm that the output folder is writable and that the selected render engine can render the scene.
-
-## Manual Verification
-
-Use the checklist in the project README before publishing a release. UI interaction and actual `bpy.ops.render.render` execution must be tested inside Blender.
+Validation reports overwrite risk. Change the filename template, camera name, subfolder, or frame token.
